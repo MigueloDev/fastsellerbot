@@ -11,18 +11,34 @@
       "@whiskeysockets/baileys",
       "baileys",
       "protobufjs",
-      "sharp"
+      "sharp",
+      "@prisma/client"
     ]
   },
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --watch src/index.js",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:push": "prisma db push",
+    "db:studio": "prisma studio"
   },
   "dependencies": {
+    "@ai-sdk/groq": "latest",
+    "@fastify/cors": "^10",
+    "@prisma/adapter-pg": "^7",
+    "@prisma/client": "^7",
+    "@prisma/client-runtime-utils": "^7.7.0",
     "@whiskeysockets/baileys": "latest",
+    "ai": "latest",
     "baileys-redis-auth": "latest",
+    "bullmq": "latest",
     "dotenv": "latest",
+    "fastify": "^5",
     "ioredis": "latest",
-    "qrcode-terminal": "latest"
+    "socket.io": "^4",
+    "pg": "^8",
+    "qrcode-terminal": "latest",
+    "zod": "latest"
   }
 }

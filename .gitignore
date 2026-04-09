@@ -1,4 +1,6 @@
-node_modules/
 .env
 auth_sessions/
 dist/
+node_modules
+/src/generated
+.pnpm-store

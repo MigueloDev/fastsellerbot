@@ -2,6 +2,8 @@ import { DisconnectReason } from '@whiskeysockets/baileys'
 import { deleteKeysWithPattern } from 'baileys-redis-auth'
 import qrcode from 'qrcode-terminal'
 import { createConnection } from './connection.js'
+import { processMessage } from '../pipeline/index.js'
+import { createWorker } from '../queue/worker.js'
 
 export function registerEvents(sock, redis, sessionId) {
   sock.ev.on('connection.update', async (update) => {
@@ -28,6 +30,7 @@ export function registerEvents(sock, redis, sessionId) {
         setTimeout(async () => {
           const result = await createConnection()
           registerEvents(result.sock, result.redis, sessionId)
+          createWorker(result.sock)
         }, 5000)
       }
     }
@@ -40,16 +43,11 @@ export function registerEvents(sock, redis, sessionId) {
       if (msg.key.fromMe) continue
       if (!msg.message) continue
 
-      const text =
-        msg.message?.conversation ||
-        msg.message?.extendedTextMessage?.text ||
-        '[no-text]'
-
-      console.log('📨 Mensaje recibido:', {
-        from: msg.key.remoteJid,
-        text,
-        timestamp: new Date().toISOString(),
-      })
+      try {
+        processMessage(sock, msg)
+      } catch (err) {
+        console.error('❌ Error en pipeline:', err)
+      }
     }
   })
 }

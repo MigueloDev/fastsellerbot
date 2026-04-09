@@ -1,0 +1,35 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Conversation {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  jid           String    @unique
+  status        String    @default("bot")
+  lastMessageAt DateTime? @map("last_message_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  messages      Message[]
+
+  @@map("conversations")
+}
+
+model Message {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId String       @map("conversation_id") @db.Uuid
+  direction      String
+  text           String
+  intent         String?
+  origin         String?
+  createdAt      DateTime     @default(now()) @map("created_at")
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt(sort: Desc)])
+  @@map("messages")
+}

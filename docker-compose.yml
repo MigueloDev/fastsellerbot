@@ -22,6 +22,8 @@ services:
       redis:
         condition: service_healthy
     env_file: .env
+    ports:
+      - "3600:3600"
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
