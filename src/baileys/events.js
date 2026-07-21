@@ -42,6 +42,7 @@ export function registerEvents(sock, redis, sessionId) {
     for (const msg of messages) {
       if (msg.key.fromMe) continue
       if (!msg.message) continue
+      if (msg.key.remoteJid === 'status@broadcast') continue
 
       try {
         processMessage(sock, msg)

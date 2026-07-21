@@ -1,8 +1,15 @@
 import 'dotenv/config'
 import { createConnection, registerEvents } from './baileys/index.js'
 import { createWorker } from './queue/worker.js'
+import { createRatesWorker } from './queue/ratesWorker.js'
+import { setupRatesJobs } from './queue/ratesProducer.js'
 import { runMigrations } from './db/migrations.js'
 import { createAppServer } from './server/fastify.js'
+
+// Rates worker is independent of Baileys reconnect (outbound worker is recreated).
+createRatesWorker()
+await setupRatesJobs()
+console.log('💱 Rates worker + schedulers iniciados')
 
 async function start(existingWorker = null) {
   await runMigrations()

@@ -11,9 +11,9 @@ const outboundQueue = new Queue('outbound-messages', {
   },
 })
 
-export async function enqueueMessage(jid, text, type = 'bot') {
+export async function enqueueMessage(jid, text, type = 'bot', key) {
   try {
-    const job = await outboundQueue.add('send-message', { jid, text, type })
+    const job = await outboundQueue.add('send-message', { jid, text, type, key })
     console.log('📬 Encolado:', { jid, type, chars: text.length })
     return job
   } catch (err) {

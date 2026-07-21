@@ -10,13 +10,15 @@ export function createWorker(sock) {
   const worker = new Worker(
     'outbound-messages',
     async (job) => {
-      const { jid, text, type } = job.data
+      const { jid, text, type, key } = job.data
 
-      console.log('⚙️  Procesando job:', { jid, type, jobId: job.id })
+      console.log('⚙️  Procesando job:', { jid, type, jobId: job.id, key })
 
       // 1. Simular que leyó el mensaje
       await sleep(readDelay())
-
+      if (key) {
+        await sock.readMessages([key])
+      }
       // 2. Mostrar indicador de escritura
       await sock.sendPresenceUpdate('composing', jid)
       console.log('✍️  Typing...', jid)
@@ -38,7 +40,7 @@ export function createWorker(sock) {
   )
 
   worker.on('completed', (job) => console.log('✅ Job completado:', job.id))
-  worker.on('failed', (job, err) => console.error('❌ Job fallido:', job?.id, err.message))
+  worker.on('failed', (job, err) => console.error('❌ Job fallido:', job?.id, err.message, err.stack))
   worker.on('error', (err) => console.error('❌ Worker error:', err.message))
 
   return worker

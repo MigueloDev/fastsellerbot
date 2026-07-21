@@ -13,9 +13,11 @@ model Conversation {
   status        String    @default("bot")
   lastMessageAt DateTime? @map("last_message_at")
   createdAt     DateTime  @default(now()) @map("created_at")
+  contactName   String?   @map("contact_name")
+  contactId     String?   @map("contact_id") @db.Uuid
 
   messages      Message[]
-
+  contact       Contact?    @relation(fields: [contactId], references: [id], onDelete: Cascade)
   @@map("conversations")
 }
 
@@ -26,10 +28,222 @@ model Message {
   text           String
   intent         String?
   origin         String?
+  agentName      String?      @map("agent_name")
   createdAt      DateTime     @default(now()) @map("created_at")
 
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@index([conversationId, createdAt(sort: Desc)])
   @@map("messages")
+}
+
+model Contact {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  jid       String    @unique
+  pushName  String?   @map("push_name")   // ← nombre automático de WA
+  name      String?                        // ← nombre personalizado (manual)
+  createdAt DateTime  @default(now())      @map("created_at")
+  updatedAt DateTime  @updatedAt           @map("updated_at")
+
+  conversations Conversation[]
+
+  @@map("contacts")
+}
+
+enum PriceRef {
+  REF_USD // precio en USD — cliente paga en divisas (cash/Zelle/USDT)
+  REF_BS  // precio en USD — cliente paga en Bs a tasa BCV (incluye brecha)
+}
+
+model Product {
+  id          String           @id @default(cuid())
+  sku         String?          @unique
+  name        String
+  description String?
+  brand       String?
+  active      Boolean          @default(true)
+  minStock    Int?             @map("min_stock")
+  variants    ProductVariant[]
+  prices      ProductPrice[]
+  movements   StockMovement[]
+  stockLevels StockLevel[]
+  saleItems   SaleItem[]
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+
+  @@map("products")
+}
+
+model ProductVariant {
+  id          String          @id @default(cuid())
+  productId   String          @map("product_id")
+  name        String
+  sku         String?         @unique
+  active      Boolean         @default(true)
+  product     Product         @relation(fields: [productId], references: [id])
+  movements   StockMovement[]
+  stockLevels StockLevel[]
+  saleItems   SaleItem[]
+  createdAt   DateTime        @default(now()) @map("created_at")
+
+  @@map("product_variants")
+}
+
+enum MovementType {
+  ENTRADA // recepción de mercancía / compra
+  SALIDA  // venta u otra salida
+  AJUSTE  // corrección de conteo físico, merma, daño (delta + o −)
+}
+
+model StockMovement {
+  id        String       @id @default(cuid())
+  productId String       @map("product_id")
+  variantId String?      @map("variant_id")
+  saleId    String?      @map("sale_id")
+  type      MovementType
+  quantity  Int // siempre positivo; el signo lo da el type (AJUSTE usa delta)
+  delta     Int // efecto real en stock: ENTRADA=+qty, SALIDA=−qty, AJUSTE=±qty
+  unitCost  Decimal?     @db.Decimal(12, 2) @map("unit_cost")
+  note      String?
+  agentName String?      @map("agent_name")
+  createdAt DateTime     @default(now()) @map("created_at")
+  product   Product      @relation(fields: [productId], references: [id])
+  variant   ProductVariant? @relation(fields: [variantId], references: [id])
+  sale      Sale?        @relation(fields: [saleId], references: [id])
+
+  @@index([productId, variantId, createdAt(sort: Desc)])
+  @@map("stock_movements")
+}
+
+model StockLevel {
+  id        String          @id @default(cuid())
+  productId String          @map("product_id")
+  variantId String?         @map("variant_id")
+  quantity  Int             @default(0)
+  updatedAt DateTime        @updatedAt @map("updated_at")
+  product   Product         @relation(fields: [productId], references: [id])
+  variant   ProductVariant? @relation(fields: [variantId], references: [id])
+
+  @@unique([productId, variantId])
+  @@map("stock_levels")
+}
+
+model ProductPrice {
+  id        String   @id @default(cuid())
+  productId String   @map("product_id")
+  ref       PriceRef
+  amount    Decimal  @db.Decimal(12, 2)
+  minQty    Int      @default(1) @map("min_qty")
+  active    Boolean  @default(true)
+  product   Product  @relation(fields: [productId], references: [id])
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([productId, ref, minQty])
+  @@map("product_prices")
+}
+
+enum RateSource {
+  BCV
+  BINANCE
+}
+
+model ExchangeRate {
+  id        String     @id @default(cuid())
+  source    RateSource
+  rate      Decimal    @db.Decimal(14, 4)
+  fetchedAt DateTime   @default(now()) @map("fetched_at")
+
+  @@index([source, fetchedAt(sort: Desc)])
+  @@map("exchange_rates")
+}
+
+enum SaleStatus {
+  PENDIENTE // creada, saldo > 0 (incluye abonada parcialmente)
+  PAGADA    // saldo ≈ 0
+  ANULADA
+}
+
+enum PaymentMethod {
+  EFECTIVO_USD  // → REF_USD
+  ZELLE         // → REF_USD
+  USDT          // → REF_USD
+  PAGO_MOVIL    // → REF_BS
+  TRANSFERENCIA // → REF_BS
+  PUNTO         // → REF_BS
+  EFECTIVO_BS   // → REF_BS
+}
+
+enum PaymentCurrency {
+  USD
+  BS
+}
+
+model Customer {
+  id        String   @id @default(cuid())
+  cedula    String?  @unique // nullable por filas legacy; required en create
+  firstName String   @map("first_name")
+  lastName  String   @map("last_name")
+  name      String // display: `${firstName} ${lastName}`
+  phone     String? // 11 chars: 0XXX + 7 dígitos, o null
+  jid       String?  @unique // link opcional a WhatsApp (futuro wiring Contact)
+  note      String?
+  active    Boolean  @default(true)
+  sales     Sale[]
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([lastName, firstName])
+  @@map("customers")
+}
+
+model Sale {
+  id         String          @id @default(cuid())
+  customerId String          @map("customer_id")
+  status     SaleStatus      @default(PENDIENTE)
+  priceRef   PriceRef        @map("price_ref") // modo de precio de TODA la venta — sin híbridos
+  totalUsd   Decimal         @db.Decimal(12, 2) @map("total_usd") // congelado al crear
+  note       String?
+  agentName  String?         @map("agent_name")
+  createdAt  DateTime        @default(now()) @map("created_at")
+  updatedAt  DateTime        @updatedAt @map("updated_at")
+  customer   Customer        @relation(fields: [customerId], references: [id])
+  items      SaleItem[]
+  payments   Payment[]
+  movements  StockMovement[]
+
+  @@index([status, createdAt(sort: Desc)])
+  @@map("sales")
+}
+
+model SaleItem {
+  id           String          @id @default(cuid())
+  saleId       String          @map("sale_id")
+  productId    String          @map("product_id")
+  variantId    String?         @map("variant_id")
+  quantity     Int
+  unitPriceUsd Decimal         @db.Decimal(12, 2) @map("unit_price_usd") // snapshot según priceRef
+  subtotalUsd  Decimal         @db.Decimal(12, 2) @map("subtotal_usd")
+  sale         Sale            @relation(fields: [saleId], references: [id])
+  product      Product         @relation(fields: [productId], references: [id])
+  variant      ProductVariant? @relation(fields: [variantId], references: [id])
+
+  @@map("sale_items")
+}
+
+model Payment {
+  id         String          @id @default(cuid())
+  saleId     String          @map("sale_id")
+  method     PaymentMethod
+  currency   PaymentCurrency
+  amount     Decimal         @db.Decimal(14, 2) // en la moneda pagada (Bs o USD)
+  amountUsd  Decimal         @db.Decimal(12, 2) @map("amount_usd") // convertido
+  rateUsed   Decimal?        @db.Decimal(14, 4) @map("rate_used") // Bs/USD si currency=BS
+  rateSource RateSource?     @map("rate_source") // BCV normalmente
+  note       String?
+  agentName  String?         @map("agent_name")
+  paidAt     DateTime        @default(now()) @map("paid_at")
+  sale       Sale            @relation(fields: [saleId], references: [id])
+
+  @@index([saleId, paidAt])
+  @@map("payments")
 }

@@ -1,8 +1,11 @@
 import { detectIntent } from '../ai/intent.js'
-import { generateResponse } from '../ai/response.js'
+import { generateResponse, generateGreeting } from '../ai/response.js'
+import { sanitizeInput } from '../ai/guardrails.js'
 import { enqueueMessage } from '../queue/producer.js'
 import { saveMessage, updateConversationStatus } from '../db/conversations.js'
+import { getContext, addToContext, isPaused, pauseConversation } from '../context/redis.js'
 import { getIO } from '../server/fastify.js'
+import { EVENTS, buildNewMessage, buildConversationUpdated, buildStatusChanged } from '../server/events.js'
 
 export async function processMessage(sock, msg) {
   try {
@@ -13,81 +16,166 @@ export async function processMessage(sock, msg) {
 
     if (!text) return
 
+    const contactName = msg.pushName
     const jid = msg.key.remoteJid
-
     console.log('🔍 Procesando:', { jid, text })
 
-    // Persistir mensaje entrante
-    await saveMessage({ jid, direction: 'inbound', text, intent: null, origin: 'client' })
-    getIO()?.to(jid).emit('new_message', {
-      jid, direction: 'inbound', text, origin: 'client', intent: null,
-      createdAt: new Date().toISOString(),
-    })
+    // Verificar si la conversación está pausada
+    const paused = await isPaused(jid)
+    if (paused) {
+      console.log('⏸️  Conversación pausada, ignorando:', jid)
+      const savedPaused = await saveMessage({ jid, direction: 'inbound', text, intent: null, origin: 'client', contactName })
+      await addToContext(jid, 'user', text)
 
-    const classification = await detectIntent(text)
-
-    if (classification.blocked) {
-      console.log('🛡️  Guardrails:', { jid, reason: classification.reason })
+      getIO()?.to(jid).emit(
+        EVENTS.NEW_MESSAGE,
+        buildNewMessage({
+          id: savedPaused?.id,
+          conversationId: savedPaused?.conversationId,
+          jid, direction: 'inbound',
+          text, origin: 'client',
+        }),
+      )
+      getIO()?.emit(
+        EVENTS.CONVERSATION_UPDATED,
+        buildConversationUpdated({ jid, lastMessage: text, status: 'human' }),
+      )
       return
     }
 
+    // Obtener contexto de la conversación
+    const history = await getContext(jid)
+
+    // Agregar al contexto Redis
+    await addToContext(jid, 'user', text)
+
+    // Guardrails
+    const guardrail = sanitizeInput(text)
+    if (!guardrail.safe) {
+      console.log('🛡️  Guardrails:', { jid, reason: guardrail.reason })
+      return
+    }
+
+    // Clasificar intent con historial
+    const classification = await detectIntent(text, history)
     console.log('🧠 Intent:', {
       intent: classification.intent,
       confidence: classification.confidence,
-      reason: classification.reason,
     })
+
+    // Guardar mensaje entrante con intent ya conocido
+    const savedInbound = await saveMessage({ jid, direction: 'inbound', text, intent: classification.intent, origin: 'client', contactName })
+
+    getIO()?.to(jid).emit(
+      EVENTS.NEW_MESSAGE,
+      buildNewMessage({
+        id: savedInbound?.id,
+        conversationId: savedInbound?.conversationId,
+        jid, direction: 'inbound',
+        text, origin: 'client',
+        intent: classification.intent,
+      }),
+    )
+    getIO()?.emit(
+      EVENTS.CONVERSATION_UPDATED,
+      buildConversationUpdated({
+        jid,
+        lastMessage: text,
+        intent: classification.intent,
+        status: null,
+      }),
+    )
 
     switch (classification.intent) {
       case 'off_topic':
-        console.log('💤 Ignorando:', jid)
+        console.log('💤 off_topic — ignorando:', jid)
         return
 
-      case 'consulta':
-        console.log('❓ Consulta — generando respuesta para:', jid)
-        const respuesta = await generateResponse(text)
-        if (!respuesta) {
-          console.log('⚠️  Sin respuesta de IA, ignorando')
-          return
-        }
-        await enqueueMessage(jid, respuesta, 'bot')
-        // Persistir respuesta del bot
-        await saveMessage({ jid, direction: 'outbound', text: respuesta, intent: 'consulta', origin: 'bot' })
-        getIO()?.to(jid).emit('new_message', {
-          jid, direction: 'outbound', text: respuesta, origin: 'bot', intent: 'consulta',
-          createdAt: new Date().toISOString(),
-        })
-        getIO()?.emit('conversation_updated', {
-          jid, intent: 'consulta', lastMessage: respuesta,
-          lastMessageAt: new Date().toISOString(),
-        })
+      case 'saludo': {
+        console.log('👋 Saludo detectado:', jid)
+        const greeting = await generateGreeting()
+        if (!greeting) return
+        await enqueueMessage(jid, greeting, 'bot', msg.key)
+        const savedGreeting = await saveMessage({ jid, direction: 'outbound', text: greeting, intent: 'saludo', origin: 'bot' })
+        await addToContext(jid, 'assistant', greeting)
+        getIO()?.to(jid).emit(
+          EVENTS.NEW_MESSAGE,
+          buildNewMessage({
+            id: savedGreeting?.id,
+            conversationId: savedGreeting?.conversationId,
+            jid, direction: 'outbound',
+            text: greeting, origin: 'bot', intent: 'saludo',
+          }),
+        )
+        getIO()?.emit(
+          EVENTS.CONVERSATION_UPDATED,
+          buildConversationUpdated({ jid, lastMessage: greeting, intent: 'saludo', status: null }),
+        )
         return
+      }
 
-      case 'intencion':
-        console.log('🎯 INTENCIÓN DE COMPRA:', {
-          jid,
-          confidence: classification.confidence,
-        })
-        const confirmacion = 'Hola, recibimos tu mensaje. En breve uno de nuestros asesores te contactará para atenderte. 😊'
-        await enqueueMessage(jid, confirmacion, 'bot')
-        // Persistir confirmación
-        await saveMessage({ jid, direction: 'outbound', text: confirmacion, intent: 'intencion', origin: 'bot' })
-        // Cambiar status de la conversación a 'human'
+      case 'consulta': {
+        console.log('❓ Consulta:', jid)
+        const respuesta = await generateResponse(text, history)
+        if (!respuesta) return
+        await enqueueMessage(jid, respuesta, 'bot', msg.key)
+        const savedResponse = await saveMessage({ jid, direction: 'outbound', text: respuesta, intent: 'consulta', origin: 'bot' })
+        await addToContext(jid, 'assistant', respuesta)
+        getIO()?.to(jid).emit(
+          EVENTS.NEW_MESSAGE,
+          buildNewMessage({
+            id: savedResponse?.id,
+            conversationId: savedResponse?.conversationId,
+            jid, direction: 'outbound',
+            text: respuesta, origin: 'bot', intent: 'consulta',
+          }),
+        )
+        getIO()?.emit(
+          EVENTS.CONVERSATION_UPDATED,
+          buildConversationUpdated({ jid, lastMessage: respuesta, intent: 'consulta', status: null }),
+        )
+        return
+      }
+
+      case 'intencion': {
+        console.log('🎯 INTENCIÓN DE COMPRA:', jid)
+        const confirmacion = 'Perfecto, en un momento un asesor te contacta para coordinar. 😊'
+        await enqueueMessage(jid, confirmacion, 'bot', msg.key)
+        const savedConfirmacion = await saveMessage({ jid, direction: 'outbound', text: confirmacion, intent: 'intencion', origin: 'bot' })
+        await addToContext(jid, 'assistant', confirmacion)
+        await pauseConversation(jid)
         await updateConversationStatus(jid, 'human')
-        getIO()?.to(jid).emit('new_message', {
-          jid, direction: 'outbound', text: confirmacion, origin: 'bot', intent: 'intencion',
-          createdAt: new Date().toISOString(),
-        })
-        getIO()?.emit('intent_detected', {
-          jid, text,
-          confidence: classification.confidence,
-          reason: classification.reason,
-          timestamp: new Date().toISOString(),
-        })
-        getIO()?.emit('conversation_updated', {
-          jid, intent: 'intencion', lastMessageAt: new Date().toISOString(),
-        })
+
+        getIO()?.to(jid).emit(
+          EVENTS.NEW_MESSAGE,
+          buildNewMessage({
+            id: savedConfirmacion?.id,
+            conversationId: savedConfirmacion?.conversationId,
+            jid, direction: 'outbound',
+            text: confirmacion, origin: 'bot', intent: 'intencion',
+          }),
+        )
+        getIO()?.emit(
+          EVENTS.CONVERSATION_STATUS_CHANGED,
+          buildStatusChanged({ jid, status: 'human', updatedBy: 'bot' }),
+        )
+        getIO()?.emit(
+          EVENTS.INTENT_DETECTED,
+          {
+            jid, text,
+            confidence: classification.confidence,
+            reason: classification.reason,
+            timestamp: new Date().toISOString(),
+          },
+        )
+        getIO()?.emit(
+          EVENTS.CONVERSATION_UPDATED,
+          buildConversationUpdated({ jid, lastMessage: confirmacion, intent: 'intencion', status: 'human' }),
+        )
         return
+      }
     }
+
   } catch (err) {
     console.error('❌ Pipeline error:', err.message)
   }

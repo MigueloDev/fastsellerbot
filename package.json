@@ -12,12 +12,15 @@
       "baileys",
       "protobufjs",
       "sharp",
-      "@prisma/client"
+      "@prisma/client",
+      "@prisma/engines",
+      "prisma"
     ]
   },
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
+    "test": "node --test src/sales/paymentMethods.test.js src/sales/balance.test.js src/customers/validate.test.js",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
@@ -25,6 +28,7 @@
   },
   "dependencies": {
     "@ai-sdk/groq": "latest",
+    "@clerk/backend": "^3.2.8",
     "@fastify/cors": "^10",
     "@prisma/adapter-pg": "^7",
     "@prisma/client": "^7",
@@ -36,9 +40,12 @@
     "dotenv": "latest",
     "fastify": "^5",
     "ioredis": "latest",
-    "socket.io": "^4",
     "pg": "^8",
     "qrcode-terminal": "latest",
+    "socket.io": "^4",
     "zod": "latest"
+  },
+  "devDependencies": {
+    "prisma": "7"
   }
 }

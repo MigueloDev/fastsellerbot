@@ -3,6 +3,20 @@ import makeWASocket, { Browsers, fetchLatestBaileysVersion } from '@whiskeysocke
 
 const { REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, SESSION_ID } = process.env
 
+// ponytail: mute Baileys pino without adding a pino dep
+const silentLogger = {
+  level: 'silent',
+  child() {
+    return this
+  },
+  trace() {},
+  debug() {},
+  info() {},
+  warn() {},
+  error() {},
+  fatal() {},
+}
+
 export async function createConnection() {
   const redisOptions = {
     host: REDIS_HOST,
@@ -12,12 +26,12 @@ export async function createConnection() {
   const { state, saveCreds, redis } = await useRedisAuthStateWithHSet(
     redisOptions,
     SESSION_ID,
-    console.log
+    /* console.log */
   )
 
   await redis.ping()
 
-  const { version, isLatest } = await fetchLatestBaileysVersion()
+  const { version } = await fetchLatestBaileysVersion()
 
   const sock = makeWASocket({
     version,
@@ -26,6 +40,7 @@ export async function createConnection() {
     syncFullHistory: false,
     markOnlineOnConnect: false,
     connectTimeoutMs: 60000,
+    logger: silentLogger,
   })
 
   sock.ev.on('creds.update', saveCreds)

@@ -1,16 +1,18 @@
 import { prisma } from './client.js'
 
-export async function upsertConversation(jid) {
+export async function upsertConversation(jid, pushName) {
   return prisma.conversation.upsert({
     where: { jid },
-    update: { lastMessageAt: new Date() },
-    create: { jid, lastMessageAt: new Date() },
+    update: { lastMessageAt: new Date(), ...(pushName && { contactName: pushName })},
+    create: { jid, lastMessageAt: new Date(), contactName: pushName },
   })
 }
 
-export async function saveMessage({ jid, direction, text, intent, origin }) {
+export async function saveMessage({
+  jid, direction, text, intent, origin, agentName, contactName
+}) {
   try {
-    const conversation = await upsertConversation(jid)
+    const conversation = await upsertConversation(jid, contactName)
     const message = await prisma.message.create({
       data: {
         conversationId: conversation.id,
@@ -18,6 +20,7 @@ export async function saveMessage({ jid, direction, text, intent, origin }) {
         text,
         intent: intent ?? null,
         origin: origin ?? null,
+        agentName: agentName ?? null,
       },
     })
     console.log('💾 Mensaje guardado:', { jid, direction, origin })
