@@ -147,8 +147,16 @@ export async function updateProduct(id, data) {
     }
 
     if (prices !== undefined) {
-      const incomingIds = new Set(prices.filter((p) => p.id).map((p) => p.id))
-      const toDeactivate = existing.prices.filter((p) => !incomingIds.has(p.id))
+      // Reconciliar por clave natural (ref, minQty): evita P2002 al reactivar
+      // un nivel que ya existía soft-deleted, y permite cambiar minQty sin
+      // chocar con filas huérfanas.
+      const priceKey = (ref, minQty) => `${ref}:${minQty ?? 1}`
+      const incomingKeys = new Set(
+        prices.map((p) => priceKey(p.ref, p.minQty ?? 1)),
+      )
+      const toDeactivate = existing.prices.filter(
+        (p) => p.active && !incomingKeys.has(priceKey(p.ref, p.minQty)),
+      )
       if (toDeactivate.length > 0) {
         await tx.productPrice.updateMany({
           where: { id: { in: toDeactivate.map((p) => p.id) } },
@@ -156,13 +164,16 @@ export async function updateProduct(id, data) {
         })
       }
       for (const p of prices) {
-        if (p.id) {
+        const minQty = p.minQty ?? 1
+        const match =
+          existing.prices.find(
+            (x) => x.ref === p.ref && x.minQty === minQty,
+          ) ?? null
+        if (match) {
           await tx.productPrice.update({
-            where: { id: p.id },
+            where: { id: match.id },
             data: {
-              ref: p.ref,
               amount: p.amount,
-              minQty: p.minQty ?? 1,
               active: p.active ?? true,
             },
           })
@@ -172,7 +183,8 @@ export async function updateProduct(id, data) {
               productId: id,
               ref: p.ref,
               amount: p.amount,
-              minQty: p.minQty ?? 1,
+              minQty,
+              active: p.active ?? true,
             },
           })
         }

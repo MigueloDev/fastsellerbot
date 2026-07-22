@@ -1,28 +1,22 @@
 import { verifyToken } from '@clerk/backend'
 
 const secretKey = process.env.CLERK_SECRET_KEY
+const jwtKey = process.env.CLERK_JWT_KEY || undefined
 
-/**
- * Verifica el JWT de sesión de Clerk con verifyToken de @clerk/backend.
- * createClerkClient no expone verifyToken (solo API REST + authenticateRequest).
- * Opcional: pasar authorizedParties en options si quieres validar el claim azp.
- * El JWT de sesión suele incluir sub; email/nombre pueden faltar sin plantilla JWT.
- */
 export async function verifyClerkToken(token) {
   if (!token || !secretKey) return null
-
   try {
-    const payload = await verifyToken(token, { secretKey })
+    const payload = await verifyToken(token, {
+      secretKey,
+      ...(jwtKey ? { jwtKey } : {}),
+    })
+    if (!payload?.sub) return null
 
-    return {
-      userId: payload.sub,
-      email: payload.email ?? null,
-      name: payload.name
-        ?? payload.first_name
-        ?? payload.given_name
-        ?? payload.email?.split('@')[0]
-        ?? 'Agente',
-    }
+    const email = typeof payload.primaryEmail === 'string' ? payload.primaryEmail : null
+    const name =
+      [payload.firstName, payload.lastName].filter(Boolean).join(' ') || 'Agente'
+
+    return { userId: payload.sub, email, name }
   } catch {
     return null
   }

@@ -178,6 +178,11 @@ enum PaymentCurrency {
   BS
 }
 
+enum DeliveryStatus {
+  POR_ENTREGAR // venta creada: reserva stock (comprometido), sin SALIDA en el ledger
+  ENTREGADA    // mercancía entregada: SALIDA escrita, stock físico descontado
+}
+
 model Customer {
   id        String   @id @default(cuid())
   cedula    String?  @unique // nullable por filas legacy; required en create
@@ -197,21 +202,25 @@ model Customer {
 }
 
 model Sale {
-  id         String          @id @default(cuid())
-  customerId String          @map("customer_id")
-  status     SaleStatus      @default(PENDIENTE)
-  priceRef   PriceRef        @map("price_ref") // modo de precio de TODA la venta — sin híbridos
-  totalUsd   Decimal         @db.Decimal(12, 2) @map("total_usd") // congelado al crear
-  note       String?
-  agentName  String?         @map("agent_name")
-  createdAt  DateTime        @default(now()) @map("created_at")
-  updatedAt  DateTime        @updatedAt @map("updated_at")
-  customer   Customer        @relation(fields: [customerId], references: [id])
-  items      SaleItem[]
-  payments   Payment[]
-  movements  StockMovement[]
+  id             String          @id @default(cuid())
+  customerId     String          @map("customer_id")
+  status         SaleStatus      @default(PENDIENTE)
+  deliveryStatus DeliveryStatus  @default(POR_ENTREGAR) @map("delivery_status")
+  deliveredAt    DateTime?       @map("delivered_at")
+  deliveredBy    String?         @map("delivered_by")
+  priceRef       PriceRef        @map("price_ref") // modo de precio de TODA la venta — sin híbridos
+  totalUsd       Decimal         @db.Decimal(12, 2) @map("total_usd") // congelado al crear
+  note           String?
+  agentName      String?         @map("agent_name")
+  createdAt      DateTime        @default(now()) @map("created_at")
+  updatedAt      DateTime        @updatedAt @map("updated_at")
+  customer       Customer        @relation(fields: [customerId], references: [id])
+  items          SaleItem[]
+  payments       Payment[]
+  movements      StockMovement[]
 
   @@index([status, createdAt(sort: Desc)])
+  @@index([deliveryStatus])
   @@map("sales")
 }
 

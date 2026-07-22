@@ -1,7 +1,8 @@
 import { prisma } from './client.js'
-import { applyMovementsInTx, StockError } from './stock.js'
+import { applyMovementsInTx, assertAvailableInTx, StockError } from './stock.js'
 import { currencyFor, PAYMENT_METHODS } from '../sales/paymentMethods.js'
 import { balanceUsdOf, isSettled, round2, PAYMENT_TOLERANCE } from '../sales/balance.js'
+import { pickTierPrice, qtyByProduct } from '../sales/pricing.js'
 import { readRate } from '../rates/store.js'
 
 export class SaleError extends Error {
@@ -54,11 +55,67 @@ function serializeSale(row) {
 }
 
 /**
- * @param {{ customerId: string, priceRef: 'REF_USD'|'REF_BS', items: Array<{productId:string, variantId?:string|null, quantity:number}>, note?: string|null, agentName?: string|null }} input
+ * @param {any} tx
+ * @param {'REF_USD'|'REF_BS'} priceRef
+ * @param {Array<{productId:string, variantId?:string|null, quantity:number, unitPriceUsd?:number}>} items
  */
-export async function createSale(input) {
-  const { customerId, priceRef, items, note = null, agentName = null } = input
+async function resolveSaleItems(tx, priceRef, items) {
+  const totalsByProduct = qtyByProduct(items)
+  const resolved = []
+  for (const raw of items) {
+    const quantity = raw.quantity
+    if (!Number.isInteger(quantity) || quantity < 1) {
+      throw new SaleError(422, 'quantity debe ser entero ≥ 1')
+    }
+    const productId = raw.productId
+    const variantId = raw.variantId ?? null
+    if (!productId) throw new SaleError(422, 'productId es requerido')
 
+    const product = await tx.product.findUnique({
+      where: { id: productId },
+      include: {
+        variants: true,
+        prices: { where: { active: true } },
+      },
+    })
+    if (!product || !product.active) {
+      throw new SaleError(422, `Producto no encontrado o inactivo: ${productId}`)
+    }
+
+    const activeVariants = product.variants.filter((v) => v.active)
+    if (activeVariants.length > 0) {
+      if (!variantId) {
+        throw new SaleError(422, 'variantId es requerido para productos con variantes')
+      }
+      const variant = activeVariants.find((v) => v.id === variantId)
+      if (!variant) throw new SaleError(422, 'Variante no encontrada o inactiva')
+    } else if (variantId) {
+      throw new SaleError(422, 'variantId debe ser null para productos sin variantes')
+    }
+
+    let unitPriceUsd
+    if (raw.unitPriceUsd != null) {
+      const override = Number(raw.unitPriceUsd)
+      if (!Number.isFinite(override) || !(override > 0)) {
+        throw new SaleError(422, 'unitPriceUsd debe ser > 0')
+      }
+      unitPriceUsd = round2(override)
+    } else {
+      const tierQty = totalsByProduct.get(productId) ?? quantity
+      const amount = pickTierPrice(product.prices, priceRef, tierQty)
+      if (amount == null) {
+        throw new SaleError(422, `Sin precio ${priceRef} para ${product.name}`)
+      }
+      unitPriceUsd = round2(amount)
+    }
+
+    const subtotalUsd = round2(unitPriceUsd * quantity)
+    resolved.push({ productId, variantId, quantity, unitPriceUsd, subtotalUsd })
+  }
+  return resolved
+}
+
+function assertSaleInput({ customerId, priceRef, items }) {
   if (!customerId) throw new SaleError(422, 'customerId es requerido')
   if (!['REF_USD', 'REF_BS'].includes(priceRef)) {
     throw new SaleError(422, 'priceRef inválido')
@@ -66,6 +123,14 @@ export async function createSale(input) {
   if (!Array.isArray(items) || items.length < 1) {
     throw new SaleError(422, 'La venta requiere al menos un ítem')
   }
+}
+
+/**
+ * @param {{ customerId: string, priceRef: 'REF_USD'|'REF_BS', items: Array<{productId:string, variantId?:string|null, quantity:number, unitPriceUsd?:number}>, note?: string|null, agentName?: string|null }} input
+ */
+export async function createSale(input) {
+  const { customerId, priceRef, items, note = null, agentName = null } = input
+  assertSaleInput({ customerId, priceRef, items })
 
   try {
     const sale = await prisma.$transaction(async (tx) => {
@@ -74,51 +139,11 @@ export async function createSale(input) {
         throw new SaleError(422, 'Cliente no encontrado o inactivo')
       }
 
-      const resolved = []
-      for (const raw of items) {
-        const quantity = raw.quantity
-        if (!Number.isInteger(quantity) || quantity < 1) {
-          throw new SaleError(422, 'quantity debe ser entero ≥ 1')
-        }
-        const productId = raw.productId
-        const variantId = raw.variantId ?? null
-        if (!productId) throw new SaleError(422, 'productId es requerido')
-
-        const product = await tx.product.findUnique({
-          where: { id: productId },
-          include: {
-            variants: true,
-            prices: { where: { active: true } },
-          },
-        })
-        if (!product || !product.active) {
-          throw new SaleError(422, `Producto no encontrado o inactivo: ${productId}`)
-        }
-
-        const activeVariants = product.variants.filter((v) => v.active)
-        if (activeVariants.length > 0) {
-          if (!variantId) {
-            throw new SaleError(422, 'variantId es requerido para productos con variantes')
-          }
-          const variant = activeVariants.find((v) => v.id === variantId)
-          if (!variant) throw new SaleError(422, 'Variante no encontrada o inactiva')
-        } else if (variantId) {
-          throw new SaleError(422, 'variantId debe ser null para productos sin variantes')
-        }
-
-        // ponytail: minQty tiers dormidos — siempre precio activo minQty=1
-        const price = product.prices.find((p) => p.ref === priceRef && p.minQty === 1)
-          ?? product.prices.find((p) => p.ref === priceRef)
-        if (!price) {
-          throw new SaleError(422, `Sin precio ${priceRef} para ${product.name}`)
-        }
-
-        const unitPriceUsd = round2(toNum(price.amount))
-        const subtotalUsd = round2(unitPriceUsd * quantity)
-        resolved.push({ productId, variantId, quantity, unitPriceUsd, subtotalUsd })
-      }
-
+      const resolved = await resolveSaleItems(tx, priceRef, items)
       const totalUsd = round2(resolved.reduce((s, it) => s + it.subtotalUsd, 0))
+
+      // La venta reserva, no descuenta: el SALIDA se escribe al entregar.
+      await assertAvailableInTx(tx, resolved)
 
       const created = await tx.sale.create({
         data: {
@@ -140,21 +165,86 @@ export async function createSale(input) {
         },
       })
 
-      await applyMovementsInTx(
-        tx,
-        resolved.map((it) => ({
-          productId: it.productId,
-          variantId: it.variantId,
-          type: 'SALIDA',
-          quantity: it.quantity,
-          saleId: created.id,
-          note: `venta ${created.id}`,
-        })),
-        { agentName },
-      )
-
       return tx.sale.findUnique({
         where: { id: created.id },
+        include: SALE_INCLUDE,
+      })
+    })
+
+    return serializeSale(sale)
+  } catch (err) {
+    if (err instanceof SaleError || err instanceof StockError) throw err
+    throw err
+  }
+}
+
+/**
+ * Corrige venta PENDIENTE, sin pagos y sin entregar. Solo cambia la reserva:
+ * no hay movimientos que reescribir porque el stock aún no salió.
+ * @param {string} saleId
+ * @param {{ customerId: string, priceRef: 'REF_USD'|'REF_BS', items: Array<{productId:string, variantId?:string|null, quantity:number, unitPriceUsd?:number}>, note?: string|null, agentName?: string|null }} input
+ */
+export async function updateSale(saleId, input) {
+  const { customerId, priceRef, items, note = null } = input
+  assertSaleInput({ customerId, priceRef, items })
+
+  try {
+    const sale = await prisma.$transaction(async (tx) => {
+      const current = await tx.sale.findUnique({
+        where: { id: saleId },
+        include: { items: true, payments: true },
+      })
+      if (!current) throw new SaleError(404, 'Venta no encontrada')
+      if (current.status === 'ANULADA') throw new SaleError(422, 'Venta anulada')
+      if (current.status !== 'PENDIENTE') {
+        throw new SaleError(422, 'Solo se puede editar una venta pendiente')
+      }
+      if (current.payments.length > 0) {
+        throw new SaleError(
+          409,
+          'No se puede editar una venta con pagos. Gestione la devolución fuera del sistema y anote en note.',
+        )
+      }
+      if (current.deliveryStatus === 'ENTREGADA') {
+        throw new SaleError(
+          409,
+          'No se puede editar una venta ya entregada. Revierta la entrega primero.',
+        )
+      }
+
+      const customer = await tx.customer.findUnique({ where: { id: customerId } })
+      if (!customer || !customer.active) {
+        throw new SaleError(422, 'Cliente no encontrado o inactivo')
+      }
+
+      const resolved = await resolveSaleItems(tx, priceRef, items)
+      const totalUsd = round2(resolved.reduce((s, it) => s + it.subtotalUsd, 0))
+
+      // La reserva vieja de esta misma venta no cuenta contra la nueva
+      await assertAvailableInTx(tx, resolved, { excludeSaleId: saleId })
+
+      await tx.saleItem.deleteMany({ where: { saleId } })
+      await tx.sale.update({
+        where: { id: saleId },
+        data: {
+          customerId,
+          priceRef,
+          totalUsd,
+          note: note?.trim() || null,
+          items: {
+            create: resolved.map((it) => ({
+              productId: it.productId,
+              variantId: it.variantId,
+              quantity: it.quantity,
+              unitPriceUsd: it.unitPriceUsd,
+              subtotalUsd: it.subtotalUsd,
+            })),
+          },
+        },
+      })
+
+      return tx.sale.findUnique({
+        where: { id: saleId },
         include: SALE_INCLUDE,
       })
     })
@@ -261,6 +351,97 @@ export async function voidSale(saleId, { agentName = null } = {}) {
       )
     }
 
+    // Sin entregar no hay SALIDA que compensar: basta con soltar la reserva.
+    if (current.deliveryStatus === 'ENTREGADA') {
+      await applyMovementsInTx(
+        tx,
+        current.items.map((it) => ({
+          productId: it.productId,
+          variantId: it.variantId,
+          type: 'ENTRADA',
+          quantity: it.quantity,
+          saleId: current.id,
+          note: `anulación venta ${current.id}`,
+        })),
+        { agentName },
+      )
+    }
+
+    return tx.sale.update({
+      where: { id: saleId },
+      data: { status: 'ANULADA' },
+      include: SALE_INCLUDE,
+    })
+  })
+
+  return serializeSale(sale)
+}
+
+/**
+ * Entrega la mercancía: aquí (y solo aquí) sale el stock físico.
+ * @param {string} saleId
+ * @param {{ agentName?: string|null }} opts
+ */
+export async function deliverSale(saleId, { agentName = null } = {}) {
+  const sale = await prisma.$transaction(async (tx) => {
+    const current = await tx.sale.findUnique({
+      where: { id: saleId },
+      include: { items: true },
+    })
+    if (!current) throw new SaleError(404, 'Venta no encontrada')
+    if (current.status === 'ANULADA') {
+      throw new SaleError(409, 'No se puede entregar una venta anulada')
+    }
+    if (current.deliveryStatus === 'ENTREGADA') {
+      throw new SaleError(409, 'La venta ya fue entregada')
+    }
+
+    await applyMovementsInTx(
+      tx,
+      current.items.map((it) => ({
+        productId: it.productId,
+        variantId: it.variantId,
+        type: 'SALIDA',
+        quantity: it.quantity,
+        saleId: current.id,
+        note: `entrega venta ${current.id}`,
+      })),
+      { agentName },
+    )
+
+    return tx.sale.update({
+      where: { id: saleId },
+      data: {
+        deliveryStatus: 'ENTREGADA',
+        deliveredAt: new Date(),
+        deliveredBy: agentName,
+      },
+      include: SALE_INCLUDE,
+    })
+  })
+
+  return serializeSale(sale)
+}
+
+/**
+ * Revierte una entrega marcada por error: devuelve el stock y vuelve a reservar.
+ * @param {string} saleId
+ * @param {{ agentName?: string|null }} opts
+ */
+export async function undeliverSale(saleId, { agentName = null } = {}) {
+  const sale = await prisma.$transaction(async (tx) => {
+    const current = await tx.sale.findUnique({
+      where: { id: saleId },
+      include: { items: true },
+    })
+    if (!current) throw new SaleError(404, 'Venta no encontrada')
+    if (current.status === 'ANULADA') {
+      throw new SaleError(409, 'Venta anulada')
+    }
+    if (current.deliveryStatus !== 'ENTREGADA') {
+      throw new SaleError(409, 'La venta no está entregada')
+    }
+
     await applyMovementsInTx(
       tx,
       current.items.map((it) => ({
@@ -269,14 +450,18 @@ export async function voidSale(saleId, { agentName = null } = {}) {
         type: 'ENTRADA',
         quantity: it.quantity,
         saleId: current.id,
-        note: `anulación venta ${current.id}`,
+        note: `reversión entrega venta ${current.id}`,
       })),
       { agentName },
     )
 
     return tx.sale.update({
       where: { id: saleId },
-      data: { status: 'ANULADA' },
+      data: {
+        deliveryStatus: 'POR_ENTREGAR',
+        deliveredAt: null,
+        deliveredBy: null,
+      },
       include: SALE_INCLUDE,
     })
   })
@@ -293,10 +478,11 @@ export async function findSale(id) {
 }
 
 /**
- * @param {{ status?: string, customerId?: string, from?: string, to?: string, limit?: number, offset?: number }} filters
+ * @param {{ status?: string, delivery?: string, customerId?: string, from?: string, to?: string, limit?: number, offset?: number }} filters
  */
 export async function listSales({
   status,
+  delivery,
   customerId,
   from,
   to,
@@ -307,6 +493,7 @@ export async function listSales({
   const skip = Math.max(Number(offset) || 0, 0)
   const where = {}
   if (status) where.status = status
+  if (delivery) where.deliveryStatus = delivery
   if (customerId) where.customerId = customerId
   if (from || to) {
     where.createdAt = {}

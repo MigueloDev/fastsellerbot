@@ -9,7 +9,7 @@ import { createAppServer } from './server/fastify.js'
 // Rates worker is independent of Baileys reconnect (outbound worker is recreated).
 createRatesWorker()
 await setupRatesJobs()
-console.log('💱 Rates worker + schedulers iniciados')
+/* console.log('💱 Rates worker + schedulers iniciados') */
 
 async function start(existingWorker = null) {
   await runMigrations()
@@ -17,9 +17,9 @@ async function start(existingWorker = null) {
   registerEvents(sock, redis, process.env.SESSION_ID)
   if (existingWorker) await existingWorker.close()
   const worker = createWorker(sock)
-  console.log('⚙️  Worker de cola iniciado')
+  /* console.log('⚙️  Worker de cola iniciado') */
   await createAppServer(sock)
-  console.log('🚀 Bot iniciado, esperando conexión...')
+  /* console.log('🚀 Bot iniciado, esperando conexión...') */
   return worker
 }
 

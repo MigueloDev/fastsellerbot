@@ -1,9 +1,6 @@
 import { Queue } from 'bullmq'
 import { redisConnection } from './client.js'
-import { parseInterval } from '../rates/parseInterval.js'
-
-const BCV_EVERY_MS = parseInterval(process.env.RATE_BCV_INTERVAL, 4 * 60 * 60 * 1000)
-const BINANCE_EVERY_MS = parseInterval(process.env.RATE_BINANCE_INTERVAL, 10 * 60 * 1000)
+import { RATE_INTERVALS_MS } from '../rates/intervals.js'
 
 export const ratesQueue = new Queue('exchange-rates', {
   connection: redisConnection,
@@ -20,12 +17,12 @@ export async function setupRatesJobs() {
   // BullMQ rejects custom ids that contain ':'
   await ratesQueue.upsertJobScheduler(
     'repeat-bcv',
-    { every: BCV_EVERY_MS },
+    { every: RATE_INTERVALS_MS.BCV },
     { name: 'fetch-bcv' },
   )
   await ratesQueue.upsertJobScheduler(
     'repeat-binance',
-    { every: BINANCE_EVERY_MS },
+    { every: RATE_INTERVALS_MS.BINANCE },
     { name: 'fetch-binance' },
   )
 
@@ -40,7 +37,7 @@ export async function setupRatesJobs() {
   }
 
   console.log('💱 Rates schedulers:', {
-    bcvEveryMs: BCV_EVERY_MS,
-    binanceEveryMs: BINANCE_EVERY_MS,
+    bcvEveryMs: RATE_INTERVALS_MS.BCV,
+    binanceEveryMs: RATE_INTERVALS_MS.BINANCE,
   })
 }

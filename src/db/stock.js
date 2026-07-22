@@ -1,4 +1,5 @@
 import { prisma } from './client.js'
+import { levelKey, availableQty, checkAvailability } from '../sales/availability.js'
 
 export class StockError extends Error {
   /**
@@ -137,95 +138,146 @@ async function lockOrCreateLevel(tx, productId, variantId) {
   return { id: locked[0]?.id ?? created.id, quantity: locked[0]?.quantity ?? 0 }
 }
 
-export async function listStockLevels() {
-  const products = await prisma.product.findMany({
-    where: { active: true },
-    include: {
-      variants: { where: { active: true }, orderBy: { name: 'asc' } },
-      stockLevels: true,
-    },
-    orderBy: { name: 'asc' },
+/**
+ * Unidades comprometidas: ítems de ventas vivas (no anuladas) aún sin entregar.
+ * Esas ventas todavía no escribieron SALIDA, así que reservan stock lógicamente.
+ *
+ * @param {any} client prisma o una transacción
+ * @param {{ excludeSaleId?: string|null }} opts excluir la venta que se está editando
+ * @returns {Promise<Map<string, number>>} levelKey(productId, variantId) → cantidad
+ */
+export async function getCommittedQuantities(
+  client = prisma,
+  { excludeSaleId = null } = {},
+) {
+  /** @type {any} */
+  const where = {
+    sale: { deliveryStatus: 'POR_ENTREGAR', status: { not: 'ANULADA' } },
+  }
+  if (excludeSaleId) where.saleId = { not: excludeSaleId }
+
+  const grouped = await client.saleItem.groupBy({
+    by: ['productId', 'variantId'],
+    where,
+    _sum: { quantity: true },
   })
+
+  const map = new Map()
+  for (const row of grouped) {
+    map.set(levelKey(row.productId, row.variantId), row._sum.quantity ?? 0)
+  }
+  return map
+}
+
+export async function listStockLevels() {
+  const [products, committed] = await Promise.all([
+    prisma.product.findMany({
+      where: { active: true },
+      include: {
+        variants: { where: { active: true }, orderBy: { name: 'asc' } },
+        stockLevels: true,
+      },
+      orderBy: { name: 'asc' },
+    }),
+    getCommittedQuantities(),
+  ])
 
   const items = []
   for (const product of products) {
     if (product.variants.length > 0) {
       for (const variant of product.variants) {
         const level = product.stockLevels.find((l) => l.variantId === variant.id)
-        const quantity = level?.quantity ?? 0
-        items.push({
-          productId: product.id,
-          productName: product.name,
-          variantId: variant.id,
-          variantName: variant.name,
-          minStock: product.minStock,
-          quantity,
-          lowStock: product.minStock != null && quantity <= product.minStock,
-          levelId: level?.id ?? null,
-          updatedAt: level?.updatedAt ?? null,
-        })
+        items.push(
+          buildLevelRow({
+            product,
+            variantId: variant.id,
+            variantName: variant.name,
+            level,
+            committed,
+            withProductName: true,
+          }),
+        )
       }
     } else {
       const level = product.stockLevels.find((l) => l.variantId == null)
-      const quantity = level?.quantity ?? 0
-      items.push({
-        productId: product.id,
-        productName: product.name,
-        variantId: null,
-        variantName: null,
-        minStock: product.minStock,
-        quantity,
-        lowStock: product.minStock != null && quantity <= product.minStock,
-        levelId: level?.id ?? null,
-        updatedAt: level?.updatedAt ?? null,
-      })
+      items.push(
+        buildLevelRow({
+          product,
+          variantId: null,
+          variantName: null,
+          level,
+          committed,
+          withProductName: true,
+        }),
+      )
     }
   }
   return items
 }
 
+/**
+ * Fila de nivel con físico / comprometido / disponible.
+ * `lowStock` mira lo **disponible**: lo reservado ya está vendido.
+ */
+function buildLevelRow({
+  product,
+  variantId,
+  variantName,
+  level,
+  committed,
+  withProductName = false,
+}) {
+  const quantity = level?.quantity ?? 0
+  const committedQty = committed.get(levelKey(product.id, variantId)) ?? 0
+  const available = availableQty(quantity, committedQty)
+  return {
+    productId: product.id,
+    ...(withProductName ? { productName: product.name } : {}),
+    variantId,
+    variantName,
+    minStock: product.minStock,
+    quantity,
+    committed: committedQty,
+    available,
+    lowStock: product.minStock != null && available <= product.minStock,
+    levelId: level?.id ?? null,
+    updatedAt: level?.updatedAt ?? null,
+  }
+}
+
 export async function getProductStock(productId, { movementsLimit = 20 } = {}) {
-  const product = await prisma.product.findUnique({
-    where: { id: productId },
-    include: {
-      variants: { where: { active: true }, orderBy: { name: 'asc' } },
-      stockLevels: true,
-    },
-  })
+  const [product, committed] = await Promise.all([
+    prisma.product.findUnique({
+      where: { id: productId },
+      include: {
+        variants: { where: { active: true }, orderBy: { name: 'asc' } },
+        stockLevels: true,
+      },
+    }),
+    getCommittedQuantities(),
+  ])
   if (!product) return null
 
   const levels =
     product.variants.length > 0
-      ? product.variants.map((variant) => {
-          const level = product.stockLevels.find((l) => l.variantId === variant.id)
-          const quantity = level?.quantity ?? 0
-          return {
-            productId: product.id,
+      ? product.variants.map((variant) =>
+          buildLevelRow({
+            product,
             variantId: variant.id,
             variantName: variant.name,
-            minStock: product.minStock,
-            quantity,
-            lowStock: product.minStock != null && quantity <= product.minStock,
-            levelId: level?.id ?? null,
-            updatedAt: level?.updatedAt ?? null,
-          }
-        })
-      : (() => {
-          const level = product.stockLevels.find((l) => l.variantId == null)
-          const quantity = level?.quantity ?? 0
-          return [
-            {
-              productId: product.id,
-              variantId: null,
-              variantName: null,
-              minStock: product.minStock,
-              quantity,
-              lowStock: product.minStock != null && quantity <= product.minStock,
-              levelId: level?.id ?? null,
-              updatedAt: level?.updatedAt ?? null,
-            },
-          ]
-        })()
+            level: product.stockLevels.find((l) => l.variantId === variant.id),
+            committed,
+          }),
+        )
+      : [
+          buildLevelRow({
+            product,
+            variantId: null,
+            variantName: null,
+            level: product.stockLevels.find((l) => l.variantId == null),
+            committed,
+          }),
+        ]
 
   const limit = Math.min(Math.max(Number(movementsLimit) || 20, 1), 100)
   const movements = await prisma.stockMovement.findMany({
@@ -287,7 +339,7 @@ export async function listMovements({
 
 /**
  * Apply movements inside an existing transaction (FOR UPDATE guard).
- * Used by createSale / voidSale so stock + sale share one TX.
+ * Used by deliverSale / undeliverSale / voidSale so stock + sale share one TX.
  *
  * @param {import('../generated/prisma/client').Prisma.TransactionClient} tx
  * @param {object[]} items
@@ -349,6 +401,70 @@ export async function applyMovementsInTx(tx, items, { agentName = null } = {}) {
   }
 
   return results
+}
+
+/**
+ * Verifica que haya disponible (físico − comprometido) para los ítems de una venta
+ * que aún no se entrega. No escribe movimientos: la venta solo reserva.
+ *
+ * Toma el lock del nivel antes de contar lo comprometido, así dos ventas
+ * simultáneas del mismo producto se serializan en vez de sobrevender.
+ *
+ * @param {import('../generated/prisma/client').Prisma.TransactionClient} tx
+ * @param {Array<{ productId: string, variantId?: string|null, quantity: number }>} items
+ * @param {{ excludeSaleId?: string|null }} opts venta en edición (su reserva no cuenta)
+ */
+export async function assertAvailableInTx(tx, items, { excludeSaleId = null } = {}) {
+  /** @type {Map<string, { productId: string, variantId: string|null, quantity: number }>} */
+  const requested = new Map()
+  for (const it of items) {
+    const variantId = it.variantId ?? null
+    const key = levelKey(it.productId, variantId)
+    const prev = requested.get(key)
+    requested.set(key, {
+      productId: it.productId,
+      variantId,
+      quantity: (prev?.quantity ?? 0) + it.quantity,
+    })
+  }
+
+  // Orden estable de locks → sin deadlocks entre ventas concurrentes
+  const keys = [...requested.keys()].sort()
+  /** @type {Map<string, number>} */
+  const onHand = new Map()
+  for (const key of keys) {
+    const { productId, variantId } = requested.get(key)
+    const level = await lockOrCreateLevel(tx, productId, variantId)
+    onHand.set(key, level.quantity)
+  }
+
+  const committed = await getCommittedQuantities(tx, { excludeSaleId })
+
+  for (const key of keys) {
+    const { productId, variantId, quantity } = requested.get(key)
+    const { ok, available } = checkAvailability({
+      onHand: onHand.get(key) ?? 0,
+      committed: committed.get(key) ?? 0,
+      requested: quantity,
+    })
+    if (!ok) {
+      const product = await tx.product.findUnique({
+        where: { id: productId },
+        select: { name: true },
+      })
+      const variant = variantId
+        ? await tx.productVariant.findUnique({
+            where: { id: variantId },
+            select: { name: true },
+          })
+        : null
+      const label = [product?.name ?? productId, variant?.name].filter(Boolean).join(' / ')
+      throw new StockError(
+        422,
+        `Stock insuficiente para ${label}: disponible ${available}, solicitado ${quantity}`,
+      )
+    }
+  }
 }
 
 /**

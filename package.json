@@ -20,7 +20,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node --test src/sales/paymentMethods.test.js src/sales/balance.test.js src/customers/validate.test.js",
+    "test": "node --test src/sales/paymentMethods.test.js src/sales/balance.test.js src/sales/receivablesSummary.test.js src/sales/availability.test.js src/sales/pricing.test.js src/customers/validate.test.js",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
