@@ -11,6 +11,8 @@ function serializeProduct(product) {
   if (!product) return null
   return {
     ...product,
+    purchasePriceUsd:
+      product.purchasePriceUsd != null ? Number(product.purchasePriceUsd) : null,
     prices: (product.prices ?? []).map(serializePrice),
   }
 }
@@ -43,7 +45,20 @@ export async function getProduct(id, { includeInactive = true } = {}) {
 }
 
 export async function createProduct(data) {
-  const { name, sku, brand, description, minStock, variants = [], prices = [] } = data
+  const {
+    name,
+    sku,
+    brand,
+    description,
+    minStock,
+    purchasePriceUsd,
+    variants = [],
+    prices = [],
+  } = data
+
+  if (purchasePriceUsd == null || !(Number(purchasePriceUsd) > 0)) {
+    throw Object.assign(new Error('purchasePriceUsd debe ser > 0'), { status: 422 })
+  }
 
   const product = await prisma.product.create({
     data: {
@@ -52,6 +67,7 @@ export async function createProduct(data) {
       brand: brand || null,
       description: description || null,
       minStock: minStock ?? null,
+      purchasePriceUsd: Number(purchasePriceUsd),
       variants: {
         create: variants.map((v) => ({
           name: v.name,
@@ -86,6 +102,7 @@ export async function updateProduct(id, data) {
     description,
     active,
     minStock,
+    purchasePriceUsd,
     variants,
     prices,
   } = data
@@ -98,6 +115,12 @@ export async function updateProduct(id, data) {
     if (description !== undefined) productData.description = description || null
     if (active !== undefined) productData.active = active
     if (minStock !== undefined) productData.minStock = minStock ?? null
+    if (purchasePriceUsd !== undefined) {
+      if (purchasePriceUsd == null || !(Number(purchasePriceUsd) > 0)) {
+        throw Object.assign(new Error('purchasePriceUsd debe ser > 0'), { status: 422 })
+      }
+      productData.purchasePriceUsd = Number(purchasePriceUsd)
+    }
 
     if (Object.keys(productData).length > 0) {
       await tx.product.update({ where: { id }, data: productData })

@@ -75,6 +75,8 @@ export default async function salesRoutes(app) {
   }, sales.update)
 
   app.post('/sales/:id/payments', {
+    // Base64 receipts can be multi-MB; Fastify default body limit is 1 MiB.
+    bodyLimit: 7 * 1024 * 1024,
     schema: {
       body: {
         type: 'object',
@@ -84,10 +86,13 @@ export default async function salesRoutes(app) {
           method: { type: 'string', enum: PAYMENT_METHOD_KEYS },
           amount: { type: 'number', exclusiveMinimum: 0 },
           note: { type: ['string', 'null'] },
+          receiptBase64: { type: ['string', 'null'] },
         },
       },
     },
   }, sales.pay)
+
+  app.get('/payments/:id/receipt-url', sales.receiptUrl)
 
   app.post('/sales/:id/deliver', sales.deliver)
   app.post('/sales/:id/undeliver', sales.undeliver)

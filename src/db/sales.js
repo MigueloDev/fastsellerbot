@@ -3,6 +3,7 @@ import { applyMovementsInTx, assertAvailableInTx, StockError } from './stock.js'
 import { currencyFor, PAYMENT_METHODS } from '../sales/paymentMethods.js'
 import { balanceUsdOf, isSettled, round2, PAYMENT_TOLERANCE } from '../sales/balance.js'
 import { pickTierPrice, qtyByProduct } from '../sales/pricing.js'
+import { saleProfitOf } from '../sales/profit.js'
 import { readRate } from '../rates/store.js'
 
 export class SaleError extends Error {
@@ -37,20 +38,30 @@ function toNum(v) {
 
 function serializeSale(row) {
   if (!row) return null
-  return {
+  const items = (row.items ?? []).map((it) => ({
+    ...it,
+    unitPriceUsd: toNum(it.unitPriceUsd),
+    unitCostUsd: it.unitCostUsd != null ? toNum(it.unitCostUsd) : null,
+    subtotalUsd: toNum(it.subtotalUsd),
+  }))
+  const base = {
     ...row,
     totalUsd: toNum(row.totalUsd),
-    items: (row.items ?? []).map((it) => ({
-      ...it,
-      unitPriceUsd: toNum(it.unitPriceUsd),
-      subtotalUsd: toNum(it.subtotalUsd),
-    })),
-    payments: (row.payments ?? []).map((p) => ({
-      ...p,
-      amount: toNum(p.amount),
-      amountUsd: toNum(p.amountUsd),
-      rateUsed: p.rateUsed != null ? toNum(p.rateUsed) : null,
-    })),
+    items,
+    payments: (row.payments ?? []).map((p) => {
+      const { receiptPath, ...rest } = p
+      return {
+        ...rest,
+        amount: toNum(p.amount),
+        amountUsd: toNum(p.amountUsd),
+        rateUsed: p.rateUsed != null ? toNum(p.rateUsed) : null,
+        hasReceipt: Boolean(receiptPath),
+      }
+    }),
+  }
+  return {
+    ...base,
+    ...saleProfitOf(base),
   }
 }
 
@@ -109,8 +120,17 @@ async function resolveSaleItems(tx, priceRef, items) {
       unitPriceUsd = round2(amount)
     }
 
+    const purchaseCost = toNum(product.purchasePriceUsd)
+    if (purchaseCost == null || !(purchaseCost > 0)) {
+      throw new SaleError(
+        422,
+        `Producto sin precio de compra: ${product.name}. Edite el producto y asigne purchasePriceUsd.`,
+      )
+    }
+    const unitCostUsd = round2(purchaseCost)
+
     const subtotalUsd = round2(unitPriceUsd * quantity)
-    resolved.push({ productId, variantId, quantity, unitPriceUsd, subtotalUsd })
+    resolved.push({ productId, variantId, quantity, unitPriceUsd, unitCostUsd, subtotalUsd })
   }
   return resolved
 }
@@ -159,6 +179,7 @@ export async function createSale(input) {
               variantId: it.variantId,
               quantity: it.quantity,
               unitPriceUsd: it.unitPriceUsd,
+              unitCostUsd: it.unitCostUsd,
               subtotalUsd: it.subtotalUsd,
             })),
           },
@@ -237,6 +258,7 @@ export async function updateSale(saleId, input) {
               variantId: it.variantId,
               quantity: it.quantity,
               unitPriceUsd: it.unitPriceUsd,
+              unitCostUsd: it.unitCostUsd,
               subtotalUsd: it.subtotalUsd,
             })),
           },
@@ -258,10 +280,16 @@ export async function updateSale(saleId, input) {
 
 /**
  * @param {string} saleId
- * @param {{ method: string, amount: number, note?: string|null, agentName?: string|null }} input
+ * @param {{
+ *   method: string,
+ *   amount: number,
+ *   note?: string|null,
+ *   agentName?: string|null,
+ *   receiptPath?: string|null,
+ * }} input
  */
 export async function addPayment(saleId, input) {
-  const { method, amount, note = null, agentName = null } = input
+  const { method, amount, note = null, agentName = null, receiptPath = null } = input
 
   if (!PAYMENT_METHODS[method]) throw new SaleError(422, `Método inválido: ${method}`)
   if (typeof amount !== 'number' || !(amount > 0)) {
@@ -311,6 +339,7 @@ export async function addPayment(saleId, input) {
         rateSource,
         note: note?.trim() || null,
         agentName,
+        receiptPath: receiptPath || null,
       },
     })
 
@@ -330,6 +359,18 @@ export async function addPayment(saleId, input) {
   })
 
   return serializeSale(sale)
+}
+
+/**
+ * @param {string} paymentId
+ * @returns {Promise<{ id: string, saleId: string, receiptPath: string|null } | null>}
+ */
+export async function findPaymentReceipt(paymentId) {
+  const row = await prisma.payment.findUnique({
+    where: { id: paymentId },
+    select: { id: true, saleId: true, receiptPath: true },
+  })
+  return row
 }
 
 /**

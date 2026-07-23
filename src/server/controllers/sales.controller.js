@@ -6,6 +6,7 @@ import {
   deliverSale,
   undeliverSale,
   findSale,
+  findPaymentReceipt,
   listSales,
   listReceivables,
   SaleError,
@@ -14,13 +15,23 @@ import { StockError } from '../../db/stock.js'
 import { balanceView } from '../../sales/balance.js'
 import { matchesPriceRef } from '../../sales/paymentMethods.js'
 import { summarizeReceivables } from '../../sales/receivablesSummary.js'
+import { parseReceiptBase64, ReceiptError } from '../../sales/receipt.js'
+import {
+  deletePaymentReceipt,
+  signedReceiptUrl,
+  uploadPaymentReceipt,
+} from '../../storage/receipts.js'
 
 function agentNameOf(request) {
   return request.user?.name ?? 'Agente'
 }
 
 function handleError(err, reply) {
-  if (err instanceof SaleError || err instanceof StockError) {
+  if (
+    err instanceof SaleError ||
+    err instanceof StockError ||
+    err instanceof ReceiptError
+  ) {
     reply.status(err.status).send({ error: err.message })
     return true
   }
@@ -112,14 +123,44 @@ export async function update(request, reply) {
 }
 
 export async function pay(request, reply) {
+  let uploadedPath = null
   try {
+    const parsed = parseReceiptBase64(request.body.receiptBase64)
+    if (parsed) {
+      uploadedPath = await uploadPaymentReceipt(
+        request.params.id,
+        parsed.buffer,
+        parsed.contentType,
+      )
+    }
     const sale = await addPayment(request.params.id, {
       method: request.body.method,
       amount: request.body.amount,
       note: request.body.note,
       agentName: agentNameOf(request),
+      receiptPath: uploadedPath,
     })
     return await saleResponse(sale)
+  } catch (err) {
+    if (uploadedPath) await deletePaymentReceipt(uploadedPath)
+    if (handleError(err, reply)) return
+    reply.status(500).send({ error: err.message })
+  }
+}
+
+export async function receiptUrl(request, reply) {
+  try {
+    const payment = await findPaymentReceipt(request.params.id)
+    if (!payment) {
+      reply.status(404).send({ error: 'Pago no encontrado' })
+      return
+    }
+    if (!payment.receiptPath) {
+      reply.status(404).send({ error: 'Este pago no tiene comprobante' })
+      return
+    }
+    const url = await signedReceiptUrl(payment.receiptPath)
+    return { url, expiresIn: 60 }
   } catch (err) {
     if (handleError(err, reply)) return
     reply.status(500).send({ error: err.message })

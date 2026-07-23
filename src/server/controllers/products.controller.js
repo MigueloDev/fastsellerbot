@@ -54,6 +54,10 @@ export async function create(request, reply) {
     const product = await createProduct(request.body)
     reply.status(201).send(product)
   } catch (err) {
+    if (err.status === 422) {
+      reply.status(422).send({ error: err.message })
+      return
+    }
     if (err.code === 'P2002') {
       reply.status(422).send({ error: 'SKU o precio duplicado' })
       return
@@ -76,6 +80,10 @@ export async function patch(request, reply) {
     }
     return product
   } catch (err) {
+    if (err.status === 422) {
+      reply.status(422).send({ error: err.message })
+      return
+    }
     if (err.code === 'P2002') {
       reply.status(422).send({ error: 'SKU o precio duplicado' })
       return

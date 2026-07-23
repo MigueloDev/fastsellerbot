@@ -1,5 +1,5 @@
 import 'dotenv/config'
-import { createConnection, registerEvents } from './baileys/index.js'
+import { createConnection, registerEvents, setCurrentSock } from './baileys/index.js'
 import { createWorker } from './queue/worker.js'
 import { createRatesWorker } from './queue/ratesWorker.js'
 import { setupRatesJobs } from './queue/ratesProducer.js'
@@ -14,6 +14,7 @@ await setupRatesJobs()
 async function start(existingWorker = null) {
   await runMigrations()
   const { sock, redis } = await createConnection()
+  setCurrentSock(sock)
   registerEvents(sock, redis, process.env.SESSION_ID)
   if (existingWorker) await existingWorker.close()
   const worker = createWorker(sock)

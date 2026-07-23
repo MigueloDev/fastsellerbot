@@ -35,6 +35,7 @@ const productWriteSchema = {
     description: { type: ['string', 'null'] },
     active: { type: 'boolean' },
     minStock: { type: ['integer', 'null'], minimum: 0 },
+    purchasePriceUsd: { type: 'number', exclusiveMinimum: 0 },
     variants: { type: 'array', items: variantItemSchema },
     prices: { type: 'array', items: priceItemSchema },
   },
@@ -48,7 +49,7 @@ export default async function productsRoutes(app) {
     schema: {
       body: {
         ...productWriteSchema,
-        required: ['name'],
+        required: ['name', 'purchasePriceUsd'],
       },
     },
   }, products.create)

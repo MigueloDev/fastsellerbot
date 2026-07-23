@@ -56,20 +56,21 @@ enum PriceRef {
 }
 
 model Product {
-  id          String           @id @default(cuid())
-  sku         String?          @unique
-  name        String
-  description String?
-  brand       String?
-  active      Boolean          @default(true)
-  minStock    Int?             @map("min_stock")
-  variants    ProductVariant[]
-  prices      ProductPrice[]
-  movements   StockMovement[]
-  stockLevels StockLevel[]
-  saleItems   SaleItem[]
-  createdAt   DateTime         @default(now()) @map("created_at")
-  updatedAt   DateTime         @updatedAt @map("updated_at")
+  id               String           @id @default(cuid())
+  sku              String?          @unique
+  name             String
+  description      String?
+  brand            String?
+  active           Boolean          @default(true)
+  minStock         Int?             @map("min_stock")
+  purchasePriceUsd Decimal?         @db.Decimal(12, 2) @map("purchase_price_usd") // costo de compra USD; required en create/update vía API
+  variants         ProductVariant[]
+  prices           ProductPrice[]
+  movements        StockMovement[]
+  stockLevels      StockLevel[]
+  saleItems        SaleItem[]
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
 
   @@map("products")
 }
@@ -202,22 +203,23 @@ model Customer {
 }
 
 model Sale {
-  id             String          @id @default(cuid())
-  customerId     String          @map("customer_id")
-  status         SaleStatus      @default(PENDIENTE)
-  deliveryStatus DeliveryStatus  @default(POR_ENTREGAR) @map("delivery_status")
-  deliveredAt    DateTime?       @map("delivered_at")
-  deliveredBy    String?         @map("delivered_by")
-  priceRef       PriceRef        @map("price_ref") // modo de precio de TODA la venta — sin híbridos
-  totalUsd       Decimal         @db.Decimal(12, 2) @map("total_usd") // congelado al crear
-  note           String?
-  agentName      String?         @map("agent_name")
-  createdAt      DateTime        @default(now()) @map("created_at")
-  updatedAt      DateTime        @updatedAt @map("updated_at")
-  customer       Customer        @relation(fields: [customerId], references: [id])
-  items          SaleItem[]
-  payments       Payment[]
-  movements      StockMovement[]
+  id               String            @id @default(cuid())
+  customerId       String            @map("customer_id")
+  status           SaleStatus        @default(PENDIENTE)
+  deliveryStatus   DeliveryStatus    @default(POR_ENTREGAR) @map("delivery_status")
+  deliveredAt      DateTime?         @map("delivered_at")
+  deliveredBy      String?           @map("delivered_by")
+  priceRef         PriceRef          @map("price_ref") // modo de precio de TODA la venta — sin híbridos
+  totalUsd         Decimal           @db.Decimal(12, 2) @map("total_usd") // congelado al crear
+  note             String?
+  agentName        String?           @map("agent_name")
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+  customer         Customer          @relation(fields: [customerId], references: [id])
+  items            SaleItem[]
+  payments         Payment[]
+  movements        StockMovement[]
+  currencyPurchase CurrencyPurchase?
 
   @@index([status, createdAt(sort: Desc)])
   @@index([deliveryStatus])
@@ -231,6 +233,7 @@ model SaleItem {
   variantId    String?         @map("variant_id")
   quantity     Int
   unitPriceUsd Decimal         @db.Decimal(12, 2) @map("unit_price_usd") // snapshot según priceRef
+  unitCostUsd  Decimal?        @db.Decimal(12, 2) @map("unit_cost_usd") // snapshot Product.purchasePriceUsd al crear/editar
   subtotalUsd  Decimal         @db.Decimal(12, 2) @map("subtotal_usd")
   sale         Sale            @relation(fields: [saleId], references: [id])
   product      Product         @relation(fields: [productId], references: [id])
@@ -239,19 +242,40 @@ model SaleItem {
   @@map("sale_items")
 }
 
+/** Compra de USDT con Bs cobrados de una venta. 1:1 con Sale. */
+model CurrencyPurchase {
+  id            String   @id @default(cuid())
+  saleId        String   @unique @map("sale_id")
+  binanceRate   Decimal  @db.Decimal(14, 4) @map("binance_rate") // Bs/USDT ingresada al comprar
+  bsSpent       Decimal  @db.Decimal(14, 2) @map("bs_spent") // Σ pagos currency=BS de la venta
+  usdtReceived  Decimal  @db.Decimal(14, 6) @map("usdt_received")
+  usdCollected  Decimal  @db.Decimal(12, 2) @map("usd_collected") // Σ pagos currency=USD
+  costUsd       Decimal? @db.Decimal(12, 2) @map("cost_usd") // COGS snapshot al registrar
+  profitUsd     Decimal? @db.Decimal(12, 2) @map("profit_usd") // usdtReceived + usdCollected − costUsd
+  note          String?
+  agentName     String?  @map("agent_name")
+  purchasedAt   DateTime @default(now()) @map("purchased_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+  sale          Sale     @relation(fields: [saleId], references: [id])
+
+  @@index([purchasedAt(sort: Desc)])
+  @@map("currency_purchases")
+}
+
 model Payment {
-  id         String          @id @default(cuid())
-  saleId     String          @map("sale_id")
-  method     PaymentMethod
-  currency   PaymentCurrency
-  amount     Decimal         @db.Decimal(14, 2) // en la moneda pagada (Bs o USD)
-  amountUsd  Decimal         @db.Decimal(12, 2) @map("amount_usd") // convertido
-  rateUsed   Decimal?        @db.Decimal(14, 4) @map("rate_used") // Bs/USD si currency=BS
-  rateSource RateSource?     @map("rate_source") // BCV normalmente
-  note       String?
-  agentName  String?         @map("agent_name")
-  paidAt     DateTime        @default(now()) @map("paid_at")
-  sale       Sale            @relation(fields: [saleId], references: [id])
+  id          String          @id @default(cuid())
+  saleId      String          @map("sale_id")
+  method      PaymentMethod
+  currency    PaymentCurrency
+  amount      Decimal         @db.Decimal(14, 2) // en la moneda pagada (Bs o USD)
+  amountUsd   Decimal         @db.Decimal(12, 2) @map("amount_usd") // convertido
+  rateUsed    Decimal?        @db.Decimal(14, 4) @map("rate_used") // Bs/USD si currency=BS
+  rateSource  RateSource?     @map("rate_source") // BCV normalmente
+  note        String?
+  agentName   String?         @map("agent_name")
+  receiptPath String?         @map("receipt_path") // path en Supabase Storage (bucket privado)
+  paidAt      DateTime        @default(now()) @map("paid_at")
+  sale        Sale            @relation(fields: [saleId], references: [id])
 
   @@index([saleId, paidAt])
   @@map("payments")

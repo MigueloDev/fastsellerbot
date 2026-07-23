@@ -2,6 +2,8 @@ import Fastify from 'fastify'
 import { Server } from 'socket.io'
 import { registerAuthHook } from './hooks.js'
 import { verifyClerkToken } from './auth.js'
+import { EVENTS } from './events.js'
+import { getWhatsAppState } from '../baileys/status.js'
 
 let io = null
 
@@ -59,6 +61,9 @@ export async function createAppServer(sockBaileys) {
 
   io.on('connection', (socket) => {
     console.log('📊 Dashboard conectado:', socket.id)
+
+    // Estado/QR actual para dashboards recién conectados
+    socket.emit(EVENTS.BOT_STATUS, getWhatsAppState())
 
     socket.on('join_conversation', (jid) => {
       socket.join(jid)
