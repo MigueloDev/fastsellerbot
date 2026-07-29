@@ -28,11 +28,18 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: "${REDIS_PASSWORD:-__pass__}"
+      # keep store off the bind mount so USER node can always write
+      npm_config_store_dir: /home/node/.local/share/pnpm/store
     volumes:
       - .:/app
+      # ponytail: hide host root-owned node_modules; volume inits as node from image dirs
+      - bot_node_modules:/app/node_modules
+      - bot_pnpm_store:/home/node/.local/share/pnpm
     command: pnpm dev
     stdin_open: true
     tty: true
 
 volumes:
   redis_data:
+  bot_node_modules:
+  bot_pnpm_store:

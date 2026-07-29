@@ -1,6 +1,12 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { round2, balanceUsdOf, isSettled, PAYMENT_TOLERANCE } from './balance.js'
+import {
+  round2,
+  balanceUsdOf,
+  isSettled,
+  settleCreditUsd,
+  PAYMENT_TOLERANCE,
+} from './balance.js'
 
 describe('balance', () => {
   it('round2 rounds to cents', () => {
@@ -44,5 +50,22 @@ describe('balance', () => {
     })
     assert.equal(bal, 0.06)
     assert.equal(isSettled(bal), true)
+  })
+
+  it('settleCreditUsd absorbe residuo de redondeo Bs→USD', () => {
+    // $36 − round2(26741.18 / 744.23) = 36 − 35.93 = 0.07
+    const raw = round2(26741.18 / 744.23)
+    assert.equal(raw, 35.93)
+    const credited = settleCreditUsd(raw, 36)
+    assert.equal(credited, 36)
+    assert.equal(balanceUsdOf({ totalUsd: 36, payments: [{ amountUsd: credited }] }), 0)
+  })
+
+  it('settleCreditUsd no toca abono parcial claro', () => {
+    assert.equal(settleCreditUsd(20, 36), 20)
+  })
+
+  it('settleCreditUsd no absorbe overpay > tolerancia', () => {
+    assert.equal(settleCreditUsd(36.2, 36), 36.2)
   })
 })

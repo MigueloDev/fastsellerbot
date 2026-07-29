@@ -4,7 +4,7 @@ export async function getStatus(request, reply) {
   try {
     return getWhatsAppState()
   } catch (err) {
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }
 
@@ -23,6 +23,6 @@ export async function logout(request, reply) {
     if (status === 'disconnected' || status === 'logged_out') {
       return { ok: true }
     }
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }

@@ -10,6 +10,6 @@ export async function summary(request, reply) {
     }
     return await getMetricsSummary(range)
   } catch (err) {
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }

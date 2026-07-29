@@ -57,20 +57,23 @@ export async function saleResponse(sale) {
 export async function list(request, reply) {
   try {
     const { status, delivery, customerId, from, to, limit, offset } = request.query ?? {}
+    // Clamp: evita page sizes ilimitados (resource-exhaustion).
+    const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 200)
+    const safeOffset = Math.max(Number(offset) || 0, 0)
     const page = await listSales({
       status,
       delivery,
       customerId,
       from,
       to,
-      limit: limit != null ? Number(limit) : 50,
-      offset: offset != null ? Number(offset) : 0,
+      limit: safeLimit,
+      offset: safeOffset,
     })
     const items = await Promise.all(page.items.map(saleResponse))
     return { ...page, items }
   } catch (err) {
     if (handleError(err, reply)) return
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }
 
@@ -84,7 +87,7 @@ export async function get(request, reply) {
     return await saleResponse(sale)
   } catch (err) {
     if (handleError(err, reply)) return
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }
 
@@ -101,7 +104,7 @@ export async function create(request, reply) {
     reply.status(201).send(await saleResponse(sale))
   } catch (err) {
     if (handleError(err, reply)) return
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }
 
@@ -118,7 +121,7 @@ export async function update(request, reply) {
     return await saleResponse(sale)
   } catch (err) {
     if (handleError(err, reply)) return
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }
 
@@ -139,12 +142,13 @@ export async function pay(request, reply) {
       note: request.body.note,
       agentName: agentNameOf(request),
       receiptPath: uploadedPath,
+      rateId: request.body.rateId || null,
     })
     return await saleResponse(sale)
   } catch (err) {
     if (uploadedPath) await deletePaymentReceipt(uploadedPath)
     if (handleError(err, reply)) return
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }
 
@@ -163,7 +167,7 @@ export async function receiptUrl(request, reply) {
     return { url, expiresIn: 60 }
   } catch (err) {
     if (handleError(err, reply)) return
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }
 
@@ -175,7 +179,7 @@ export async function void_(request, reply) {
     return await saleResponse(sale)
   } catch (err) {
     if (handleError(err, reply)) return
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }
 
@@ -187,7 +191,7 @@ export async function deliver(request, reply) {
     return await saleResponse(sale)
   } catch (err) {
     if (handleError(err, reply)) return
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }
 
@@ -199,7 +203,7 @@ export async function undeliver(request, reply) {
     return await saleResponse(sale)
   } catch (err) {
     if (handleError(err, reply)) return
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }
 
@@ -210,6 +214,6 @@ export async function receivables(request, reply) {
     return summarizeReceivables(withBal)
   } catch (err) {
     if (handleError(err, reply)) return
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }

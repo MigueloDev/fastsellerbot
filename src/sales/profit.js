@@ -86,3 +86,74 @@ export function paymentCurrencyTotals(payments = []) {
     usdCollected: round2(usdCollected),
   }
 }
+
+/**
+ * Suma montos ya atribuidos en compras de divisas de una venta.
+ * @param {Array<{ bsSpent?: *, usdCollected?: *, usdtReceived?: * }>} purchases
+ */
+export function purchaseCurrencyTotals(purchases = []) {
+  let bsSpent = 0
+  let usdCollected = 0
+  let usdtReceived = 0
+  for (const p of purchases) {
+    bsSpent += toNum(p.bsSpent) ?? 0
+    usdCollected += toNum(p.usdCollected) ?? 0
+    usdtReceived += toNum(p.usdtReceived) ?? 0
+  }
+  return {
+    bsSpent: round2(bsSpent),
+    usdCollected: round2(usdCollected),
+    // ponytail: 6 dp USDT; upgrade si el ledger de egresos exige Decimal
+    usdtReceived: Math.round(usdtReceived * 1e6) / 1e6,
+  }
+}
+
+/**
+ * Bs/USD aún no convertidos o atribuidos a compras previas.
+ * `purchases` puede ser CurrencyPurchase[] o CurrencyPurchaseAllocation[]
+ * (misma forma: bsSpent / usdCollected / usdtReceived).
+ *
+ * @param {Array<{ currency: string, amount: *, amountUsd: * }>} payments
+ * @param {Array<{ bsSpent?: *, usdCollected?: *, usdtReceived?: * }>} purchases
+ */
+export function fxAvailability(payments = [], purchases = []) {
+  const paid = paymentCurrencyTotals(payments)
+  const spent = purchaseCurrencyTotals(purchases)
+  return {
+    totalBs: paid.bsSpent,
+    totalUsdCollected: paid.usdCollected,
+    bsConverted: spent.bsSpent,
+    usdAttributed: spent.usdCollected,
+    usdtReceived: spent.usdtReceived,
+    bsAvailable: round2(paid.bsSpent - spent.bsSpent),
+    usdAvailable: round2(paid.usdCollected - spent.usdCollected),
+  }
+}
+
+/**
+ * Reparte usdtTotal proporcional a bsAmounts; la última fila absorbe el residuo (6 dp).
+ * @param {number[]} bsAmounts
+ * @param {number} usdtTotal
+ * @returns {number[]}
+ */
+export function allocateUsdt(bsAmounts = [], usdtTotal) {
+  const amounts = bsAmounts.map((v) => Number(v) || 0)
+  const usdt = Math.round(Number(usdtTotal) * 1e6) / 1e6
+  if (!amounts.length || !(usdt > 0)) return amounts.map(() => 0)
+
+  const totalBs = amounts.reduce((a, b) => a + b, 0)
+  if (!(totalBs > 0)) return amounts.map(() => 0)
+
+  const shares = []
+  let allocated = 0
+  for (let i = 0; i < amounts.length; i++) {
+    if (i === amounts.length - 1) {
+      shares.push(Math.round((usdt - allocated) * 1e6) / 1e6)
+    } else {
+      const share = Math.round(((usdt * amounts[i]) / totalBs) * 1e6) / 1e6
+      shares.push(share)
+      allocated = Math.round((allocated + share) * 1e6) / 1e6
+    }
+  }
+  return shares
+}

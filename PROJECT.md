@@ -14,6 +14,7 @@ Este archivo es un puntero local. Si cambia el stack o la estructura de `src/`, 
 | Runtime | Node ≥24, ESM |
 | Package manager | **pnpm** |
 | Puerto default | `3600` |
+| Dev Docker | `docker compose up` desde `backend/`; volumes `bot_node_modules` + `bot_pnpm_store` (no uses el `.pnpm-store`/`node_modules` root del host) |
 
 ## Stack
 
@@ -38,7 +39,7 @@ src/
   sales/         # dominio puro: paymentMethods, balance, receivablesSummary, availability, pricing, receipt, profit (+ node:test)
   customers/     # validate cedula/teléfono VE (+ node:test)
   context/       # Redis historial + pause
-  storage/       # Supabase Storage (comprobantes de pago)
+  storage/       # Supabase Storage (comprobantes: sales/ + compras_usdt/)
   db/            # Prisma + conversations + products + rates + stock + customers + sales + currencyPurchases + metrics + reports
   server/
     routes/                # plugins por dominio + index montaje
@@ -46,7 +47,7 @@ src/
     fastify.js, auth.js, hooks.js, events.js, queryRange.js
 prisma/
   schema.prisma
-  migrations/    # … + payment_receipt_path + purchase_cost_and_currency_purchases
+  migrations/    # … + currency_purchases_many_per_sale + currency_purchase_allocations
 scripts/
   rebuild-stock.js
   stock-selfcheck.js
@@ -72,8 +73,8 @@ Clientes: `GET/POST /customers` · `PATCH /customers/:id` — create: `cedula` +
 Ventas: `GET/POST /sales` · `GET/PATCH /sales/:id` · `POST /sales/:id/payments` (`receiptBase64?` WebP) · `GET /payments/:id/receipt-url` · `POST /sales/:id/deliver` · `POST /sales/:id/undeliver` · `POST /sales/:id/void` · `GET /receivables`  
 Deuda en USD; precios por nivel (`minQty`, qty agregada del producto) o override `unitPriceUsd` por ítem; costo congelado en `SaleItem.unitCostUsd`; respuesta incluye `costUsd`/`profitUsd`/`marginPct`; pagos Bs congelan tasa BCV; `PAYMENT_TOLERANCE` (default 0.10). Comprobantes opcionales en bucket privado Supabase (`SUPABASE_*`).
 
-Compras de divisas: `GET /currency-purchases` · `GET /currency-purchases/eligible-sales` · `POST /currency-purchases`  
-1:1 con venta `PAGADA` que tenga pagos Bs; `profitUsd = usdtReceived + usdCollected − costUsd`; solo controla entradas USDT.
+Compras de divisas: `GET /currency-purchases` · `GET /currency-purchases/eligible-sales` · `POST /currency-purchases` (`saleIds[]` o alias `saleId`, `receiptBase64?`) · `GET /currency-purchases/:id/receipt-url`  
+1 trade ↔ N ventas vía `CurrencyPurchaseAllocation` (consume `bsAvailable` de cada una; USDT proporcional a Bs); N compras en el tiempo por venta OK; `profitUsd` de cierre en la allocation (`PAGADA` + sin Bs pendientes) o `stampClosingProfitIfNeeded` al liquidar; captura nueva en `compras_usdt/{purchaseId}/`. Prisma/migrate: correr dentro del contenedor `bot`.
 
 **Entrega (`DeliveryStatus`)**: eje independiente del estado de pago. Crear una venta **reserva** stock (valida `available`, sin movimientos); el `SALIDA` se escribe solo en `/deliver`. `/undeliver` y anular una venta entregada compensan con `ENTRADA`. Anular una venta sin entregar no toca el ledger. Editar (`PATCH`) exige PENDIENTE + sin pagos + `POR_ENTREGAR`.
 

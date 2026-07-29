@@ -24,6 +24,20 @@ export function isSettled(balanceUsd) {
 }
 
 /**
+ * Absorbe centavos de redondeo Bs↔USD: si el pago casi cubre el saldo,
+ * acredita exactamente `balance` para que el libro quede en $0.
+ * Overpay > tolerancia no se toca aquí (addPayment lo rechaza antes).
+ *
+ * @param {number} amountUsd
+ * @param {number} balance
+ */
+export function settleCreditUsd(amountUsd, balance) {
+  if (amountUsd > balance + PAYMENT_TOLERANCE) return amountUsd
+  if (balance - amountUsd <= PAYMENT_TOLERANCE) return balance
+  return amountUsd
+}
+
+/**
  * Punto único de saldos para lista, detalle, pago y receivables.
  * Lazy-import de rates para que los tests de dominio no toquen Redis.
  * @param {{ totalUsd: *, payments?: *[] }} sale

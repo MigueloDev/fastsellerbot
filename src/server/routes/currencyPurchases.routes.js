@@ -25,18 +25,28 @@ export default async function currencyPurchasesRoutes(app) {
   }, currencyPurchases.eligible)
 
   app.post('/currency-purchases', {
+    // Base64 receipts can be multi-MB; Fastify default body limit is 1 MiB.
+    bodyLimit: 7 * 1024 * 1024,
     schema: {
       body: {
         type: 'object',
-        required: ['saleId', 'binanceRate', 'usdtReceived'],
+        required: ['binanceRate', 'usdtReceived'],
         additionalProperties: false,
         properties: {
           saleId: { type: 'string', minLength: 1 },
+          saleIds: {
+            type: 'array',
+            minItems: 1,
+            items: { type: 'string', minLength: 1 },
+          },
           binanceRate: { type: 'number', exclusiveMinimum: 0 },
           usdtReceived: { type: 'number', exclusiveMinimum: 0 },
           note: { type: ['string', 'null'] },
+          receiptBase64: { type: ['string', 'null'] },
         },
       },
     },
   }, currencyPurchases.create)
+
+  app.get('/currency-purchases/:id/receipt-url', currencyPurchases.receiptUrl)
 }

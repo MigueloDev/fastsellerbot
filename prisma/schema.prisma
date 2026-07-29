@@ -215,11 +215,11 @@ model Sale {
   agentName        String?           @map("agent_name")
   createdAt        DateTime          @default(now()) @map("created_at")
   updatedAt        DateTime          @updatedAt @map("updated_at")
-  customer         Customer          @relation(fields: [customerId], references: [id])
-  items            SaleItem[]
-  payments         Payment[]
-  movements        StockMovement[]
-  currencyPurchase CurrencyPurchase?
+  customer                    Customer                     @relation(fields: [customerId], references: [id])
+  items                       SaleItem[]
+  payments                    Payment[]
+  movements                   StockMovement[]
+  currencyPurchaseAllocations CurrencyPurchaseAllocation[]
 
   @@index([status, createdAt(sort: Desc)])
   @@index([deliveryStatus])
@@ -242,24 +242,43 @@ model SaleItem {
   @@map("sale_items")
 }
 
-/** Compra de USDT con Bs cobrados de una venta. 1:1 con Sale. */
+/** Compra de USDT (un trade Binance). N ventas vía CurrencyPurchaseAllocation. */
 model CurrencyPurchase {
-  id            String   @id @default(cuid())
-  saleId        String   @unique @map("sale_id")
-  binanceRate   Decimal  @db.Decimal(14, 4) @map("binance_rate") // Bs/USDT ingresada al comprar
-  bsSpent       Decimal  @db.Decimal(14, 2) @map("bs_spent") // Σ pagos currency=BS de la venta
-  usdtReceived  Decimal  @db.Decimal(14, 6) @map("usdt_received")
-  usdCollected  Decimal  @db.Decimal(12, 2) @map("usd_collected") // Σ pagos currency=USD
-  costUsd       Decimal? @db.Decimal(12, 2) @map("cost_usd") // COGS snapshot al registrar
-  profitUsd     Decimal? @db.Decimal(12, 2) @map("profit_usd") // usdtReceived + usdCollected − costUsd
-  note          String?
-  agentName     String?  @map("agent_name")
-  purchasedAt   DateTime @default(now()) @map("purchased_at")
-  createdAt     DateTime @default(now()) @map("created_at")
-  sale          Sale     @relation(fields: [saleId], references: [id])
+  id           String                       @id @default(cuid())
+  binanceRate  Decimal                      @db.Decimal(14, 4) @map("binance_rate") // Bs/USDT ingresada al comprar
+  bsSpent      Decimal                      @db.Decimal(14, 2) @map("bs_spent") // Σ Bs convertidos en esta compra
+  usdtReceived Decimal                      @db.Decimal(14, 6) @map("usdt_received")
+  usdCollected Decimal                      @db.Decimal(12, 2) @map("usd_collected") // Σ USD atribuidos
+  costUsd      Decimal?                     @db.Decimal(12, 2) @map("cost_usd") // legacy; cierre vive en allocations
+  profitUsd    Decimal?                     @db.Decimal(12, 2) @map("profit_usd") // legacy; cierre vive en allocations
+  note         String?
+  agentName    String?                      @map("agent_name")
+  receiptPath  String?                      @map("receipt_path") // path en Supabase Storage (dir compras_usdt/)
+  purchasedAt  DateTime                     @default(now()) @map("purchased_at")
+  createdAt    DateTime                     @default(now()) @map("created_at")
+  allocations  CurrencyPurchaseAllocation[]
 
   @@index([purchasedAt(sort: Desc)])
   @@map("currency_purchases")
+}
+
+/** Cuota de una venta dentro de una compra USDT (N ventas ↔ 1 trade). */
+model CurrencyPurchaseAllocation {
+  id           String           @id @default(cuid())
+  purchaseId   String           @map("purchase_id")
+  saleId       String           @map("sale_id")
+  bsSpent      Decimal          @db.Decimal(14, 2) @map("bs_spent")
+  usdCollected Decimal          @db.Decimal(12, 2) @map("usd_collected")
+  usdtReceived Decimal          @db.Decimal(14, 6) @map("usdt_received")
+  costUsd      Decimal?         @db.Decimal(12, 2) @map("cost_usd") // COGS solo en cierre de esa venta
+  profitUsd    Decimal?         @db.Decimal(12, 2) @map("profit_usd") // Σ usdt + Σ usd − costUsd (cierre)
+  purchase     CurrencyPurchase @relation(fields: [purchaseId], references: [id])
+  sale         Sale             @relation(fields: [saleId], references: [id])
+
+  @@unique([purchaseId, saleId])
+  @@index([saleId])
+  @@index([purchaseId])
+  @@map("currency_purchase_allocations")
 }
 
 model Payment {

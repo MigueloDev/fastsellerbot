@@ -12,18 +12,49 @@ export function getIO() {
 }
 
 export async function createAppServer(sockBaileys) {
-  const app = Fastify({ logger: false })
+  const isProd = process.env.NODE_ENV === 'production'
 
-  const origins = [
-    process.env.DASHBOARD_URL ?? 'http://localhost:3004',
-    'http://localhost:3600',
-  ]
+  // bodyLimit ~8 MB: los comprobantes llegan como JSON base64 (imagen hasta 5 MiB
+  // → ~6.7 MB en base64). El default de Fastify (1 MB) rechazaría el upload.
+  const app = Fastify({ logger: false, bodyLimit: 8 * 1024 * 1024 })
 
-  console.log('origins', origins)
+  // CORS: en producción solo el dashboard real. localhost solo fuera de prod.
+  const origins = isProd
+    ? [process.env.DASHBOARD_URL].filter(Boolean)
+    : [process.env.DASHBOARD_URL ?? 'http://localhost:3004', 'http://localhost:3600']
+
+  if (origins.length === 0) {
+    throw new Error('DASHBOARD_URL es obligatorio en producción (CORS)')
+  }
+
+  // Security headers (helmet). CSP mínima: es una API JSON, no sirve HTML.
+  await app.register(import('@fastify/helmet'), {
+    contentSecurityPolicy: false,
+    crossOriginResourcePolicy: { policy: 'same-site' },
+  })
+
+  // Rate limiting global. Los límites finos por ruta se aplican en los plugins.
+  await app.register(import('@fastify/rate-limit'), {
+    global: true,
+    max: 100,
+    timeWindow: '1 minute',
+  })
 
   await app.register(import('@fastify/cors'), {
     origin: origins,
     credentials: true,
+  })
+
+  // Error handler global: no filtrar mensajes internos (Prisma/pg) al cliente.
+  app.setErrorHandler((error, request, reply) => {
+    const status = error.statusCode ?? 500
+    if (status >= 500) {
+      console.error('❌ Error no controlado:', error)
+      reply.status(500).send({ error: 'Error interno del servidor' })
+      return
+    }
+    // Errores 4xx (incl. validación/rate-limit) sí pueden devolver su mensaje.
+    reply.status(status).send({ error: error.message })
   })
 
   registerAuthHook(app)
@@ -46,7 +77,7 @@ export async function createAppServer(sockBaileys) {
     transports: ['websocket', 'polling'],
   })
 
-  // Proteger Socket.IO — verificar token en el handshake
+  // Proteger Socket.IO — verificar token en el handshake (Clerk invite-only)
   io.use(async (socket, next) => {
     const token = socket.handshake.auth?.token
     const user = await verifyClerkToken(token)
@@ -55,7 +86,6 @@ export async function createAppServer(sockBaileys) {
       return
     }
     socket.user = user
-    console.log('📊 Dashboard autenticado:', user.name)
     next()
   })
 

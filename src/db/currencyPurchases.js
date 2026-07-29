@@ -4,7 +4,8 @@ import {
   saleProfitOf,
   currencyPurchaseProfitOf,
   expectedUsdt,
-  paymentCurrencyTotals,
+  fxAvailability,
+  allocateUsdt,
 } from '../sales/profit.js'
 
 export class CurrencyPurchaseError extends Error {
@@ -26,48 +27,97 @@ function toNum(v) {
   return Number(v)
 }
 
+const SALE_SELECT = {
+  id: true,
+  status: true,
+  totalUsd: true,
+  priceRef: true,
+  createdAt: true,
+  customer: { select: { id: true, name: true, cedula: true } },
+}
+
 const SALE_FOR_PURCHASE = {
   customer: { select: { id: true, name: true, cedula: true } },
   items: true,
   payments: { orderBy: { paidAt: 'asc' } },
-  currencyPurchase: true,
+  currencyPurchaseAllocations: { orderBy: { id: 'asc' } },
+}
+
+const PURCHASE_INCLUDE = {
+  allocations: {
+    include: { sale: { select: SALE_SELECT } },
+    orderBy: { id: 'asc' },
+  },
+}
+
+function serializeSaleBrief(sale) {
+  if (!sale) return null
+  return {
+    id: sale.id,
+    status: sale.status,
+    totalUsd: toNum(sale.totalUsd),
+    priceRef: sale.priceRef,
+    createdAt: sale.createdAt,
+    customer: sale.customer ?? null,
+  }
+}
+
+function serializeAllocation(row) {
+  return {
+    id: row.id,
+    purchaseId: row.purchaseId,
+    saleId: row.saleId,
+    bsSpent: toNum(row.bsSpent),
+    usdCollected: toNum(row.usdCollected),
+    usdtReceived: toNum(row.usdtReceived),
+    costUsd: row.costUsd != null ? toNum(row.costUsd) : null,
+    profitUsd: row.profitUsd != null ? toNum(row.profitUsd) : null,
+    sale: serializeSaleBrief(row.sale),
+  }
+}
+
+function profitFromAllocations(allocations = []) {
+  let any = false
+  let sum = 0
+  for (const a of allocations) {
+    if (a.profitUsd != null) {
+      any = true
+      sum += toNum(a.profitUsd)
+    }
+  }
+  return any ? round2(sum) : null
 }
 
 function serializePurchase(row) {
   if (!row) return null
-  const sale = row.sale
-    ? {
-        id: row.sale.id,
-        status: row.sale.status,
-        totalUsd: toNum(row.sale.totalUsd),
-        priceRef: row.sale.priceRef,
-        createdAt: row.sale.createdAt,
-        customer: row.sale.customer ?? null,
-      }
-    : undefined
+  const allocations = (row.allocations ?? []).map(serializeAllocation)
+  const first = allocations[0] ?? null
+  const { receiptPath, ...rest } = row
   return {
-    id: row.id,
-    saleId: row.saleId,
-    binanceRate: toNum(row.binanceRate),
-    bsSpent: toNum(row.bsSpent),
-    usdtReceived: toNum(row.usdtReceived),
-    usdCollected: toNum(row.usdCollected),
-    costUsd: row.costUsd != null ? toNum(row.costUsd) : null,
-    profitUsd: row.profitUsd != null ? toNum(row.profitUsd) : null,
-    expectedUsdt: expectedUsdt(toNum(row.bsSpent), toNum(row.binanceRate)),
-    note: row.note,
-    agentName: row.agentName,
-    purchasedAt: row.purchasedAt,
-    createdAt: row.createdAt,
-    sale,
+    id: rest.id,
+    saleId: first?.saleId ?? null,
+    binanceRate: toNum(rest.binanceRate),
+    bsSpent: toNum(rest.bsSpent),
+    usdtReceived: toNum(rest.usdtReceived),
+    usdCollected: toNum(rest.usdCollected),
+    costUsd: rest.costUsd != null ? toNum(rest.costUsd) : null,
+    profitUsd: profitFromAllocations(row.allocations) ??
+      (rest.profitUsd != null ? toNum(rest.profitUsd) : null),
+    expectedUsdt: expectedUsdt(toNum(rest.bsSpent), toNum(rest.binanceRate)),
+    note: rest.note,
+    agentName: rest.agentName,
+    hasReceipt: Boolean(receiptPath),
+    purchasedAt: rest.purchasedAt,
+    createdAt: rest.createdAt,
+    allocations,
+    sale: first?.sale ?? undefined,
   }
 }
 
 function eligibleFromSale(sale) {
-  if (!sale || sale.status !== 'PAGADA') return null
-  if (sale.currencyPurchase) return null
-  const { bsSpent, usdCollected } = paymentCurrencyTotals(sale.payments)
-  if (!(bsSpent > 0)) return null
+  if (!sale || sale.status === 'ANULADA') return null
+  const fx = fxAvailability(sale.payments, sale.currencyPurchaseAllocations)
+  if (!(fx.bsAvailable > 0)) return null
   const items = (sale.items ?? []).map((it) => ({
     quantity: it.quantity,
     unitCostUsd: it.unitCostUsd != null ? toNum(it.unitCostUsd) : null,
@@ -80,11 +130,77 @@ function eligibleFromSale(sale) {
     totalUsd: toNum(sale.totalUsd),
     createdAt: sale.createdAt,
     customer: sale.customer,
-    bsSpent,
-    usdCollected,
+    bsSpent: fx.bsAvailable,
+    bsConverted: fx.bsConverted,
+    usdCollected: fx.usdAvailable,
+    usdAttributed: fx.usdAttributed,
+    usdtConverted: fx.usdtReceived,
     costUsd: profit.costUsd,
     paymentsCount: sale.payments?.length ?? 0,
+    purchasesCount: sale.currencyPurchaseAllocations?.length ?? 0,
   }
+}
+
+/**
+ * Estampa COGS/profit en la allocation más reciente cuando la venta está PAGADA
+ * y ya no quedan Bs por convertir. No-op si ya hay profit o faltan Bs.
+ *
+ * @param {import('@prisma/client').Prisma.TransactionClient | typeof prisma} db
+ * @param {string} saleId
+ */
+export async function stampClosingProfitIfNeeded(db, saleId) {
+  const sale = await db.sale.findUnique({
+    where: { id: saleId },
+    include: {
+      items: true,
+      payments: true,
+      currencyPurchaseAllocations: {
+        include: { purchase: { select: { id: true, purchasedAt: true, usdCollected: true } } },
+      },
+    },
+  })
+  if (!sale || sale.status !== 'PAGADA') return null
+  if (!sale.currencyPurchaseAllocations?.length) return null
+
+  const fx = fxAvailability(sale.payments, sale.currencyPurchaseAllocations)
+  if (fx.bsAvailable > 0) return null
+  if (sale.currencyPurchaseAllocations.some((a) => a.profitUsd != null)) return null
+
+  const items = (sale.items ?? []).map((it) => ({
+    quantity: it.quantity,
+    unitCostUsd: it.unitCostUsd != null ? toNum(it.unitCostUsd) : null,
+  }))
+  const { costUsd } = saleProfitOf({ totalUsd: sale.totalUsd, items })
+  const latest = [...sale.currencyPurchaseAllocations].sort(
+    (a, b) =>
+      new Date(a.purchase.purchasedAt).getTime() -
+      new Date(b.purchase.purchasedAt).getTime(),
+  ).at(-1)
+  const { profitUsd } = currencyPurchaseProfitOf({
+    usdtReceived: fx.usdtReceived,
+    usdCollected: fx.usdAttributed + fx.usdAvailable,
+    costUsd,
+  })
+
+  const updatedAlloc = await db.currencyPurchaseAllocation.update({
+    where: { id: latest.id },
+    data: {
+      usdCollected: round2(toNum(latest.usdCollected) + fx.usdAvailable),
+      costUsd,
+      profitUsd,
+    },
+  })
+
+  if (fx.usdAvailable > 0) {
+    await db.currencyPurchase.update({
+      where: { id: latest.purchase.id },
+      data: {
+        usdCollected: round2(toNum(latest.purchase.usdCollected) + fx.usdAvailable),
+      },
+    })
+  }
+
+  return updatedAlloc
 }
 
 /**
@@ -94,20 +210,9 @@ export async function listCurrencyPurchases({ limit = 50, offset = 0 } = {}) {
   const take = Math.min(Math.max(Number(limit) || 50, 1), 100)
   const skip = Math.max(Number(offset) || 0, 0)
 
-  const [rows, total, agg] = await Promise.all([
+  const [rows, total, headerAgg, allocAgg] = await Promise.all([
     prisma.currencyPurchase.findMany({
-      include: {
-        sale: {
-          select: {
-            id: true,
-            status: true,
-            totalUsd: true,
-            priceRef: true,
-            createdAt: true,
-            customer: { select: { id: true, name: true, cedula: true } },
-          },
-        },
-      },
+      include: PURCHASE_INCLUDE,
       orderBy: { purchasedAt: 'desc' },
       take,
       skip,
@@ -117,10 +222,12 @@ export async function listCurrencyPurchases({ limit = 50, offset = 0 } = {}) {
       _sum: {
         bsSpent: true,
         usdtReceived: true,
-        profitUsd: true,
         usdCollected: true,
       },
       _count: { _all: true },
+    }),
+    prisma.currencyPurchaseAllocation.aggregate({
+      _sum: { profitUsd: true },
     }),
   ])
 
@@ -130,38 +237,78 @@ export async function listCurrencyPurchases({ limit = 50, offset = 0 } = {}) {
     limit: take,
     offset: skip,
     summary: {
-      count: agg._count._all,
-      bsSpent: round2(toNum(agg._sum.bsSpent)),
-      usdtAcquired: round2(toNum(agg._sum.usdtReceived)),
-      usdCollected: round2(toNum(agg._sum.usdCollected)),
-      profitUsd: agg._sum.profitUsd != null ? round2(toNum(agg._sum.profitUsd)) : null,
+      count: headerAgg._count._all,
+      bsSpent: round2(toNum(headerAgg._sum.bsSpent)),
+      usdtAcquired: round2(toNum(headerAgg._sum.usdtReceived)),
+      usdCollected: round2(toNum(headerAgg._sum.usdCollected)),
+      profitUsd:
+        allocAgg._sum.profitUsd != null
+          ? round2(toNum(allocAgg._sum.profitUsd))
+          : null,
     },
   }
 }
 
-/** Ventas PAGADA con pagos Bs y sin compra de divisas previa. */
+/** Ventas con Bs cobrados aún no convertidos (parcial o total). */
 export async function listEligibleSales({ limit = 50 } = {}) {
   const take = Math.min(Math.max(Number(limit) || 50, 1), 100)
+  // ponytail: over-fetch then filter by bsAvailable; upgrade a raw SQL si la lista crece
   const sales = await prisma.sale.findMany({
     where: {
-      status: 'PAGADA',
-      currencyPurchase: null,
+      status: { not: 'ANULADA' },
       payments: { some: { currency: 'BS' } },
     },
     include: SALE_FOR_PURCHASE,
     orderBy: { createdAt: 'desc' },
-    take,
+    take: Math.min(take * 3, 150),
   })
-  return sales.map(eligibleFromSale).filter(Boolean)
+  return sales.map(eligibleFromSale).filter(Boolean).slice(0, take)
 }
 
 /**
- * @param {{ saleId: string, binanceRate: number, usdtReceived: number, note?: string|null, agentName?: string|null }} input
+ * @param {string} purchaseId
+ * @returns {Promise<{ id: string, receiptPath: string|null } | null>}
+ */
+export async function findCurrencyPurchaseReceipt(purchaseId) {
+  const row = await prisma.currencyPurchase.findUnique({
+    where: { id: purchaseId },
+    select: { id: true, receiptPath: true },
+  })
+  return row
+}
+
+/**
+ * @param {{
+ *   id?: string,
+ *   saleIds?: string[],
+ *   saleId?: string,
+ *   binanceRate: number,
+ *   usdtReceived: number,
+ *   note?: string|null,
+ *   agentName?: string|null,
+ *   receiptPath?: string|null,
+ * }} input
  */
 export async function createCurrencyPurchase(input) {
-  const { saleId, binanceRate, usdtReceived, note = null, agentName = null } = input
+  const {
+    id: purchaseId,
+    binanceRate,
+    usdtReceived,
+    note = null,
+    agentName = null,
+    receiptPath = null,
+  } = input
 
-  if (!saleId) throw new CurrencyPurchaseError(422, 'saleId es requerido')
+  const rawIds = Array.isArray(input.saleIds) && input.saleIds.length
+    ? input.saleIds
+    : input.saleId
+      ? [input.saleId]
+      : []
+  const saleIds = [...new Set(rawIds.map((s) => String(s || '').trim()).filter(Boolean))]
+  if (!saleIds.length) {
+    throw new CurrencyPurchaseError(422, 'saleIds es requerido')
+  }
+
   const rate = Number(binanceRate)
   if (!Number.isFinite(rate) || !(rate > 0)) {
     throw new CurrencyPurchaseError(422, 'binanceRate debe ser > 0')
@@ -171,76 +318,86 @@ export async function createCurrencyPurchase(input) {
     throw new CurrencyPurchaseError(422, 'usdtReceived debe ser > 0')
   }
 
-  try {
-    const created = await prisma.$transaction(async (tx) => {
+  const usdtRounded = Math.round(usdt * 1e6) / 1e6
+  const rateRounded = Math.round(rate * 1e4) / 1e4
+
+  const created = await prisma.$transaction(async (tx) => {
+    /** @type {Array<{ sale: any, fx: ReturnType<typeof fxAvailability>, bsSpent: number, usdCollected: number }>} */
+    const rows = []
+    for (const saleId of saleIds) {
       const sale = await tx.sale.findUnique({
         where: { id: saleId },
         include: SALE_FOR_PURCHASE,
       })
-      if (!sale) throw new CurrencyPurchaseError(404, 'Venta no encontrada')
+      if (!sale) throw new CurrencyPurchaseError(404, `Venta no encontrada: ${saleId}`)
       if (sale.status === 'ANULADA') {
-        throw new CurrencyPurchaseError(422, 'Venta anulada')
+        throw new CurrencyPurchaseError(422, `Venta anulada: ${saleId}`)
       }
-      if (sale.status !== 'PAGADA') {
-        throw new CurrencyPurchaseError(422, 'Solo ventas PAGADA pueden convertir a USDT')
+      const fx = fxAvailability(sale.payments, sale.currencyPurchaseAllocations)
+      if (!(fx.bsAvailable > 0)) {
+        throw new CurrencyPurchaseError(
+          422,
+          `No hay bolívares pendientes de convertir: ${saleId}`,
+        )
       }
-      if (sale.currencyPurchase) {
-        throw new CurrencyPurchaseError(409, 'Esta venta ya tiene una compra de divisas')
-      }
-
-      const { bsSpent, usdCollected } = paymentCurrencyTotals(sale.payments)
-      if (!(bsSpent > 0)) {
-        throw new CurrencyPurchaseError(422, 'La venta no tiene pagos en bolívares')
-      }
-
-      const items = (sale.items ?? []).map((it) => ({
-        quantity: it.quantity,
-        unitCostUsd: it.unitCostUsd != null ? toNum(it.unitCostUsd) : null,
-      }))
-      const { costUsd } = saleProfitOf({ totalUsd: sale.totalUsd, items })
-      const { profitUsd } = currencyPurchaseProfitOf({
-        usdtReceived: usdt,
-        usdCollected,
-        costUsd,
+      rows.push({
+        sale,
+        fx,
+        bsSpent: fx.bsAvailable,
+        usdCollected: fx.usdAvailable,
       })
+    }
 
-      // round USDT to 6 decimals; Binance rate to 4
-      const usdtRounded = Math.round(usdt * 1e6) / 1e6
-      const rateRounded = Math.round(rate * 1e4) / 1e4
+    const bsAmounts = rows.map((r) => r.bsSpent)
+    const usdtShares = allocateUsdt(bsAmounts, usdtRounded)
+    const bsSpentTotal = round2(bsAmounts.reduce((a, b) => a + b, 0))
+    const usdCollectedTotal = round2(rows.reduce((a, r) => a + r.usdCollected, 0))
 
-      return tx.currencyPurchase.create({
-        data: {
-          saleId,
-          binanceRate: rateRounded,
-          bsSpent,
-          usdtReceived: usdtRounded,
-          usdCollected,
+    const allocCreate = rows.map((r, i) => {
+      const share = usdtShares[i]
+      // consume todo el disponible → remaining Bs = 0
+      const isClosing = r.sale.status === 'PAGADA'
+      let costUsd = null
+      let profitUsd = null
+      if (isClosing) {
+        const items = (r.sale.items ?? []).map((it) => ({
+          quantity: it.quantity,
+          unitCostUsd: it.unitCostUsd != null ? toNum(it.unitCostUsd) : null,
+        }))
+        ;({ costUsd } = saleProfitOf({ totalUsd: r.sale.totalUsd, items }))
+        ;({ profitUsd } = currencyPurchaseProfitOf({
+          usdtReceived: r.fx.usdtReceived + share,
+          usdCollected: r.fx.usdAttributed + r.usdCollected,
           costUsd,
-          profitUsd,
-          note: note?.trim() || null,
-          agentName,
-        },
-        include: {
-          sale: {
-            select: {
-              id: true,
-              status: true,
-              totalUsd: true,
-              priceRef: true,
-              createdAt: true,
-              customer: { select: { id: true, name: true, cedula: true } },
-            },
-          },
-        },
-      })
+        }))
+      }
+      return {
+        saleId: r.sale.id,
+        bsSpent: r.bsSpent,
+        usdCollected: r.usdCollected,
+        usdtReceived: share,
+        costUsd,
+        profitUsd,
+      }
     })
 
-    return serializePurchase(created)
-  } catch (err) {
-    if (err instanceof CurrencyPurchaseError) throw err
-    if (err?.code === 'P2002') {
-      throw new CurrencyPurchaseError(409, 'Esta venta ya tiene una compra de divisas')
-    }
-    throw err
-  }
+    return tx.currencyPurchase.create({
+      data: {
+        ...(purchaseId ? { id: purchaseId } : {}),
+        binanceRate: rateRounded,
+        bsSpent: bsSpentTotal,
+        usdtReceived: usdtRounded,
+        usdCollected: usdCollectedTotal,
+        costUsd: null,
+        profitUsd: null,
+        note: note?.trim() || null,
+        agentName,
+        receiptPath: receiptPath || null,
+        allocations: { create: allocCreate },
+      },
+      include: PURCHASE_INCLUDE,
+    })
+  })
+
+  return serializePurchase(created)
 }

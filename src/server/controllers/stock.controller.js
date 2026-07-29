@@ -10,7 +10,7 @@ export async function list(request, reply) {
   try {
     return await listStockLevels()
   } catch (err) {
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }
 
@@ -26,7 +26,7 @@ export async function productStock(request, reply) {
     }
     return detail
   } catch (err) {
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }
 
@@ -40,7 +40,7 @@ export async function createMovementBatch(request, reply) {
       reply.status(err.status).send({ error: err.message })
       return
     }
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }
 
@@ -57,6 +57,6 @@ export async function listMovementHistory(request, reply) {
       offset: offset != null ? Number(offset) : 0,
     })
   } catch (err) {
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }

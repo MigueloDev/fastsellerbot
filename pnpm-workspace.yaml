@@ -1,0 +1,9 @@
+allowBuilds:
+  '@clerk/shared': true
+  '@prisma/engines': true
+  '@whiskeysockets/baileys': true
+  baileys: true
+  msgpackr-extract: true
+  prisma: true
+  protobufjs: true
+  sharp: true

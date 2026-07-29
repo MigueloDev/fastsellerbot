@@ -27,7 +27,7 @@ export async function list(request, reply) {
       request.query.includeInactive === 'true' || request.query.includeInactive === true
     return await listProducts({ includeInactive })
   } catch (err) {
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }
 
@@ -40,7 +40,7 @@ export async function get(request, reply) {
     }
     return product
   } catch (err) {
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }
 
@@ -62,7 +62,7 @@ export async function create(request, reply) {
       reply.status(422).send({ error: 'SKU o precio duplicado' })
       return
     }
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }
 
@@ -88,7 +88,7 @@ export async function patch(request, reply) {
       reply.status(422).send({ error: 'SKU o precio duplicado' })
       return
     }
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }
 
@@ -101,6 +101,6 @@ export async function remove(request, reply) {
     }
     return product
   } catch (err) {
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }

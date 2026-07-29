@@ -5,22 +5,11 @@
   "engines": {
     "node": ">=24"
   },
-  "packageManager": "pnpm@10.0.0",
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "@whiskeysockets/baileys",
-      "baileys",
-      "protobufjs",
-      "sharp",
-      "@prisma/client",
-      "@prisma/engines",
-      "prisma"
-    ]
-  },
+  "packageManager": "pnpm@11.16.0",
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node --test src/sales/paymentMethods.test.js src/sales/balance.test.js src/sales/receivablesSummary.test.js src/sales/availability.test.js src/sales/pricing.test.js src/sales/receipt.test.js src/sales/profit.test.js src/customers/validate.test.js",
+    "test": "node --test src/sales/paymentMethods.test.js src/sales/balance.test.js src/sales/paymentRate.test.js src/sales/receivablesSummary.test.js src/sales/availability.test.js src/sales/pricing.test.js src/sales/receipt.test.js src/sales/profit.test.js src/customers/validate.test.js",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
@@ -30,11 +19,13 @@
     "@ai-sdk/groq": "latest",
     "@clerk/backend": "^3.2.8",
     "@fastify/cors": "^10",
+    "@fastify/helmet": "^13",
+    "@fastify/rate-limit": "^10",
     "@prisma/adapter-pg": "^7",
     "@prisma/client": "^7",
     "@prisma/client-runtime-utils": "^7.7.0",
     "@supabase/supabase-js": "^2.110.8",
-    "@whiskeysockets/baileys": "latest",
+    "@whiskeysockets/baileys": "7.0.0-rc13",
     "ai": "latest",
     "baileys-redis-auth": "latest",
     "bullmq": "latest",

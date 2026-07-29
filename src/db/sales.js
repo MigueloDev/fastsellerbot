@@ -1,10 +1,19 @@
 import { prisma } from './client.js'
 import { applyMovementsInTx, assertAvailableInTx, StockError } from './stock.js'
 import { currencyFor, PAYMENT_METHODS } from '../sales/paymentMethods.js'
-import { balanceUsdOf, isSettled, round2, PAYMENT_TOLERANCE } from '../sales/balance.js'
+import { resolvePaymentQuote } from '../sales/paymentRate.js'
+import {
+  balanceUsdOf,
+  isSettled,
+  round2,
+  settleCreditUsd,
+  PAYMENT_TOLERANCE,
+} from '../sales/balance.js'
 import { pickTierPrice, qtyByProduct } from '../sales/pricing.js'
 import { saleProfitOf } from '../sales/profit.js'
 import { readRate } from '../rates/store.js'
+import { getRateById } from './rates.js'
+import { stampClosingProfitIfNeeded } from './currencyPurchases.js'
 
 export class SaleError extends Error {
   /**
@@ -286,10 +295,11 @@ export async function updateSale(saleId, input) {
  *   note?: string|null,
  *   agentName?: string|null,
  *   receiptPath?: string|null,
+ *   rateId?: string|null,
  * }} input
  */
 export async function addPayment(saleId, input) {
-  const { method, amount, note = null, agentName = null, receiptPath = null } = input
+  const { method, amount, note = null, agentName = null, receiptPath = null, rateId = null } = input
 
   if (!PAYMENT_METHODS[method]) throw new SaleError(422, `Método inválido: ${method}`)
   if (typeof amount !== 'number' || !(amount > 0)) {
@@ -299,16 +309,17 @@ export async function addPayment(saleId, input) {
   const currency = currencyFor(method)
   // Snapshot BCV on every payment (audit); BS conversion uses same quote.
   // Live balanceBs still comes from readRate in balanceView, not this snapshot.
-  const quote = await readRate('BCV')
-  if (!quote || !(quote.rate > 0)) {
-    throw new SaleError(
-      503,
-      'No hay tasa BCV disponible. Espere a que corra el job de tasas o configure el fetch.',
-    )
+  // rateId permite fijar una tasa histórica (p. ej. pago de ayer cargado hoy).
+  const resolvedQuote = await resolvePaymentQuote(rateId, {
+    getById: getRateById,
+    readLive: () => readRate('BCV'),
+  })
+  if (resolvedQuote.error) {
+    throw new SaleError(resolvedQuote.error.status, resolvedQuote.error.message)
   }
-  const rateUsed = quote.rate
+  const rateUsed = resolvedQuote.quote.rate
   const rateSource = 'BCV'
-  const amountUsd =
+  const rawAmountUsd =
     currency === 'BS' ? round2(amount / rateUsed) : round2(amount)
 
   const sale = await prisma.$transaction(async (tx) => {
@@ -321,12 +332,14 @@ export async function addPayment(saleId, input) {
     if (current.status === 'PAGADA') throw new SaleError(422, 'Venta ya está pagada')
 
     const balance = balanceUsdOf(serializeSale(current))
-    if (amountUsd - balance > PAYMENT_TOLERANCE) {
+    if (rawAmountUsd - balance > PAYMENT_TOLERANCE) {
       throw new SaleError(
         422,
-        `Pago excede el saldo (saldo $${balance.toFixed(2)}, pago $${amountUsd.toFixed(2)})`,
+        `Pago excede el saldo (saldo $${balance.toFixed(2)}, pago $${rawAmountUsd.toFixed(2)})`,
       )
     }
+    // ponytail: absorbe ≤$0.10 de redondeo Bs→USD para libro en $0 exacto
+    const amountUsd = settleCreditUsd(rawAmountUsd, balance)
 
     await tx.payment.create({
       data: {
@@ -349,11 +362,14 @@ export async function addPayment(saleId, input) {
     })
     const remaining = balanceUsdOf(serializeSale(withPayments))
     if (isSettled(remaining)) {
-      return tx.sale.update({
+      const paid = await tx.sale.update({
         where: { id: saleId },
         data: { status: 'PAGADA' },
         include: SALE_INCLUDE,
       })
+      // Bs ya convertidos con abonos: estampa profit en la última compra
+      await stampClosingProfitIfNeeded(tx, saleId)
+      return paid
     }
     return withPayments
   })

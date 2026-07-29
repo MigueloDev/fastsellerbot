@@ -18,7 +18,7 @@ export async function list(request, reply) {
   try {
     return await getConversations()
   } catch (err) {
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }
 
@@ -27,7 +27,7 @@ export async function messages(request, reply) {
     const jid = decodeURIComponent(request.params.jid)
     return await getMessages(jid)
   } catch (err) {
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }
 
@@ -52,7 +52,7 @@ export async function patchStatus(request, reply) {
     )
     return { ok: true }
   } catch (err) {
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }
 
@@ -95,6 +95,6 @@ export async function send(request, reply) {
 
     reply.send({ ok: true, queued: true, agent: agentName })
   } catch (err) {
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }

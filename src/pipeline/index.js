@@ -18,7 +18,8 @@ export async function processMessage(sock, msg) {
 
     const contactName = msg.pushName
     const jid = msg.key.remoteJid
-    console.log('🔍 Procesando:', { jid, text })
+    // No loguear el contenido del mensaje (PII). Solo un identificador acortado.
+    console.log('🔍 Procesando mensaje de:', jid?.split('@')[0]?.slice(0, 6) + '…')
 
     // Verificar si la conversación está pausada
     const paused = await isPaused(jid)

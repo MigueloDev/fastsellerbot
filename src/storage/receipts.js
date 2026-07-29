@@ -25,14 +25,12 @@ function supabase() {
 }
 
 /**
- * @param {string} saleId
+ * @param {string} path
  * @param {Buffer} buffer
  * @param {string} contentType
  * @returns {Promise<string>} storage path
  */
-export async function uploadPaymentReceipt(saleId, buffer, contentType) {
-  const id = randomBytes(8).toString('hex')
-  const path = `sales/${saleId}/${Date.now()}-${id}.webp`
+async function uploadReceipt(path, buffer, contentType) {
   const { error } = await supabase().storage.from(bucketName()).upload(path, buffer, {
     contentType,
     upsert: false,
@@ -41,6 +39,31 @@ export async function uploadPaymentReceipt(saleId, buffer, contentType) {
     throw new Error(`Error subiendo comprobante: ${error.message}`)
   }
   return path
+}
+
+/**
+ * @param {string} saleId
+ * @param {Buffer} buffer
+ * @param {string} contentType
+ * @returns {Promise<string>} storage path
+ */
+export async function uploadPaymentReceipt(saleId, buffer, contentType) {
+  const id = randomBytes(8).toString('hex')
+  const path = `sales/${saleId}/${Date.now()}-${id}.webp`
+  return uploadReceipt(path, buffer, contentType)
+}
+
+/**
+ * Comprobante de compra USDT — mismo bucket, dir `compras_usdt/{purchaseId}/`.
+ * @param {string} purchaseId
+ * @param {Buffer} buffer
+ * @param {string} contentType
+ * @returns {Promise<string>} storage path
+ */
+export async function uploadCurrencyPurchaseReceipt(purchaseId, buffer, contentType) {
+  const id = randomBytes(8).toString('hex')
+  const path = `compras_usdt/${purchaseId}/${Date.now()}-${id}.webp`
+  return uploadReceipt(path, buffer, contentType)
 }
 
 /**

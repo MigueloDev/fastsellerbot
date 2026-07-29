@@ -25,7 +25,7 @@ export async function sales(request, reply) {
     return await getSalesReport({ ...range, status, delivery, customerId })
   } catch (err) {
     if (handleError(err, reply)) return
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }
 
@@ -44,7 +44,7 @@ export async function kardex(request, reply) {
     })
   } catch (err) {
     if (handleError(err, reply)) return
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }
 
@@ -59,6 +59,6 @@ export async function movements(request, reply) {
     return await getProductMovements({ ...range, productId })
   } catch (err) {
     if (handleError(err, reply)) return
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }

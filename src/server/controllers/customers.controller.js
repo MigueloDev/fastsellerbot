@@ -29,7 +29,7 @@ export async function list(request, reply) {
     return await listCustomers({ q, includeInactive })
   } catch (err) {
     if (handleError(err, reply)) return
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }
 
@@ -39,7 +39,7 @@ export async function create(request, reply) {
     reply.status(201).send(customer)
   } catch (err) {
     if (handleError(err, reply)) return
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }
 
@@ -49,6 +49,6 @@ export async function patch(request, reply) {
     return customer
   } catch (err) {
     if (handleError(err, reply)) return
-    reply.status(500).send({ error: err.message })
+    throw err
   }
 }
