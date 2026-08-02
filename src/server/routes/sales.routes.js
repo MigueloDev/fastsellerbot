@@ -87,6 +87,8 @@ export default async function salesRoutes(app) {
           amount: { type: 'number', exclusiveMinimum: 0 },
           note: { type: ['string', 'null'] },
           receiptBase64: { type: ['string', 'null'] },
+          // Fila BCV histórica (GET /rates/history); sin ella → tasa live.
+          rateId: { type: ['string', 'null'], minLength: 1 },
         },
       },
     },
