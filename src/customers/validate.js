@@ -20,7 +20,7 @@ export function normalizeCedula(raw) {
   if (raw == null) return null
   const s = String(raw).trim().toUpperCase().replace(/[\s\-.]/g, '')
   if (!s) return null
-  if (/^[VE]\d{6,9}$/.test(s)) return s
+  if (/^[VEJ]\d{6,9}$/.test(s)) return s
   if (/^\d{6,9}$/.test(s)) return s
   return null
 }

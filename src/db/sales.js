@@ -390,6 +390,45 @@ export async function findPaymentReceipt(paymentId) {
 }
 
 /**
+ * @param {string} paymentId
+ * @param {string} receiptPath
+ * @returns {Promise<{ saleId: string, previousPath: string|null }>}
+ */
+export async function setPaymentReceiptPath(paymentId, receiptPath) {
+  if (!receiptPath) throw new SaleError(422, 'receiptPath es requerido')
+  const current = await prisma.payment.findUnique({
+    where: { id: paymentId },
+    select: { id: true, saleId: true, receiptPath: true },
+  })
+  if (!current) throw new SaleError(404, 'Pago no encontrado')
+  await prisma.payment.update({
+    where: { id: paymentId },
+    data: { receiptPath },
+  })
+  return { saleId: current.saleId, previousPath: current.receiptPath }
+}
+
+/**
+ * @param {string} paymentId
+ * @returns {Promise<{ saleId: string, previousPath: string }>}
+ */
+export async function clearPaymentReceipt(paymentId) {
+  const current = await prisma.payment.findUnique({
+    where: { id: paymentId },
+    select: { id: true, saleId: true, receiptPath: true },
+  })
+  if (!current) throw new SaleError(404, 'Pago no encontrado')
+  if (!current.receiptPath) {
+    throw new SaleError(404, 'Este pago no tiene comprobante')
+  }
+  await prisma.payment.update({
+    where: { id: paymentId },
+    data: { receiptPath: null },
+  })
+  return { saleId: current.saleId, previousPath: current.receiptPath }
+}
+
+/**
  * @param {string} saleId
  * @param {{ agentName?: string|null }} opts
  */

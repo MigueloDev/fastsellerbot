@@ -7,6 +7,8 @@ import {
   undeliverSale,
   findSale,
   findPaymentReceipt,
+  setPaymentReceiptPath,
+  clearPaymentReceipt,
   listSales,
   listReceivables,
   SaleError,
@@ -165,6 +167,52 @@ export async function receiptUrl(request, reply) {
     }
     const url = await signedReceiptUrl(payment.receiptPath)
     return { url, expiresIn: 60 }
+  } catch (err) {
+    if (handleError(err, reply)) return
+    throw err
+  }
+}
+
+export async function putReceipt(request, reply) {
+  let uploadedPath = null
+  let committed = false
+  try {
+    const parsed = parseReceiptBase64(request.body.receiptBase64)
+    if (!parsed) {
+      reply.status(422).send({ error: 'receiptBase64 es requerido' })
+      return
+    }
+    const payment = await findPaymentReceipt(request.params.id)
+    if (!payment) {
+      reply.status(404).send({ error: 'Pago no encontrado' })
+      return
+    }
+    uploadedPath = await uploadPaymentReceipt(
+      payment.saleId,
+      parsed.buffer,
+      parsed.contentType,
+    )
+    const { saleId, previousPath } = await setPaymentReceiptPath(
+      request.params.id,
+      uploadedPath,
+    )
+    committed = true
+    if (previousPath) await deletePaymentReceipt(previousPath)
+    const sale = await findSale(saleId)
+    return await saleResponse(sale)
+  } catch (err) {
+    if (uploadedPath && !committed) await deletePaymentReceipt(uploadedPath)
+    if (handleError(err, reply)) return
+    throw err
+  }
+}
+
+export async function deleteReceipt(request, reply) {
+  try {
+    const { saleId, previousPath } = await clearPaymentReceipt(request.params.id)
+    await deletePaymentReceipt(previousPath)
+    const sale = await findSale(saleId)
+    return await saleResponse(sale)
   } catch (err) {
     if (handleError(err, reply)) return
     throw err

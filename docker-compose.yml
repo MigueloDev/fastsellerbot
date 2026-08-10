@@ -1,3 +1,5 @@
+name: victorialeadsERP
+
 services:
   redis:
     image: redis:7-alpine
@@ -14,6 +16,8 @@ services:
       - 6385:6379
     volumes:
       - redis_data:/data
+    networks:
+      - victorialeads-erp-network
 
   bot:
     build: .
@@ -38,6 +42,12 @@ services:
     command: pnpm dev
     stdin_open: true
     tty: true
+    networks:
+      - victorialeads-erp-network
+
+networks:
+  victorialeads-erp-network:
+    driver: bridge
 
 volumes:
   redis_data:

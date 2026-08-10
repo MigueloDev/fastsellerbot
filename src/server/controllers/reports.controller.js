@@ -21,8 +21,14 @@ export async function sales(request, reply) {
       reply.status(400).send({ error: range.error })
       return
     }
-    const { status, delivery, customerId } = request.query ?? {}
-    return await getSalesReport({ ...range, status, delivery, customerId })
+    const { status, delivery, customerId, paymentState } = request.query ?? {}
+    return await getSalesReport({
+      ...range,
+      status,
+      delivery,
+      customerId,
+      paymentState,
+    })
   } catch (err) {
     if (handleError(err, reply)) return
     throw err

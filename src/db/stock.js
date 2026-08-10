@@ -27,13 +27,14 @@ function serializeLevel(row) {
 }
 
 /**
- * @param {{ type: string, quantity?: number, delta?: number, unitCost?: number|null, note?: string|null, productId: string, variantId?: string|null, saleId?: string|null }} item
+ * @param {{ type: string, quantity?: number, delta?: number, unitCost?: number|null, note?: string|null, productId: string, variantId?: string|null, saleId?: string|null, deliveryNoteId?: string|null }} item
  */
 function normalizeItem(item) {
   const { type, productId } = item
   const variantId = item.variantId ?? null
   const note = item.note?.trim() || null
   const saleId = item.saleId ?? null
+  const deliveryNoteId = item.deliveryNoteId ?? null
 
   if (!productId) throw new StockError(422, 'productId es requerido')
   if (!['ENTRADA', 'SALIDA', 'AJUSTE'].includes(type)) {
@@ -69,6 +70,7 @@ function normalizeItem(item) {
     productId,
     variantId,
     saleId,
+    deliveryNoteId,
     type,
     quantity,
     delta,
@@ -380,6 +382,7 @@ export async function applyMovementsInTx(tx, items, { agentName = null } = {}) {
         productId: item.productId,
         variantId: item.variantId,
         saleId: item.saleId,
+        deliveryNoteId: item.deliveryNoteId,
         type: item.type,
         quantity: item.quantity,
         delta: item.delta,

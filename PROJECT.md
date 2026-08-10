@@ -10,7 +10,7 @@ Este archivo es un puntero local. Si cambia el stack o la estructura de `src/`, 
 
 | Item | Valor |
 |------|--------|
-| Rol | Bot WhatsApp + API inbox + catálogo + inventario + ventas + compras USDT + tasas + métricas + reportes (VictoriaLeads) |
+| Rol | Bot WhatsApp + API inbox + catálogo + inventario + ventas + notas de entrega + compras USDT + tasas + métricas + reportes (VictoriaLeads) |
 | Runtime | Node ≥24, ESM |
 | Package manager | **pnpm** |
 | Puerto default | `3600` |
@@ -37,17 +37,18 @@ src/
   queue/         # outbound + rates producer/worker
   rates/         # fetch BCV/Binance, validate, store, getRates
   sales/         # dominio puro: paymentMethods, balance, receivablesSummary, availability, pricing, receipt, profit (+ node:test)
+  deliveryNotes/ # dominio puro: totals / visibleMoneyFields (+ node:test)
   customers/     # validate cedula/teléfono VE (+ node:test)
   context/       # Redis historial + pause
   storage/       # Supabase Storage (comprobantes: sales/ + compras_usdt/)
-  db/            # Prisma + conversations + products + rates + stock + customers + sales + currencyPurchases + metrics + reports
+  db/            # Prisma + conversations + products + rates + stock + customers + sales + deliveryNotes + currencyPurchases + metrics + reports
   server/
     routes/                # plugins por dominio + index montaje
-    controllers/           # health, conversations, rates, products, stock, customers, sales, currencyPurchases, metrics, reports
+    controllers/           # … + deliveryNotes
     fastify.js, auth.js, hooks.js, events.js, queryRange.js
 prisma/
   schema.prisma
-  migrations/    # … + currency_purchases_many_per_sale + currency_purchase_allocations
+  migrations/    # … + currency_purchase_allocations + add_delivery_notes
 scripts/
   rebuild-stock.js
   stock-selfcheck.js
@@ -63,7 +64,7 @@ Inbox: `GET /health` · `GET /conversations` · `GET /conversations/:jid/message
 
 Productos: `GET/POST /products` · `GET/PATCH/DELETE /products/:id` (soft delete; `purchasePriceUsd` requerido en create; precios USD `REF_USD`/`REF_BS` con niveles `minQty`; `minStock?`)
 
-Inventario: `GET /stock` · `GET /products/:id/stock` · `POST /stock/movements` (batch) · `GET /stock/movements` — ledger append-only; `saleId?` en movimientos  
+Inventario: `GET /stock` · `GET /products/:id/stock` · `POST /stock/movements` (batch) · `GET /stock/movements` — ledger append-only; `saleId?` / `deliveryNoteId?` en movimientos  
 Los niveles traen `quantity` (físico), `committed` (reservado por ventas sin entregar) y `available = quantity − committed`; `lowStock` compara contra `available`.
 
 Tasas: `GET /rates` → `{ bcv, binance, gap }` (Redis `rate:*` + fallback PG `exchange_rates`)
@@ -77,6 +78,9 @@ Compras de divisas: `GET /currency-purchases` · `GET /currency-purchases/eligib
 1 trade ↔ N ventas vía `CurrencyPurchaseAllocation` (consume `bsAvailable` de cada una; USDT proporcional a Bs); N compras en el tiempo por venta OK; `profitUsd` de cierre en la allocation (`PAGADA` + sin Bs pendientes) o `stampClosingProfitIfNeeded` al liquidar; captura nueva en `compras_usdt/{purchaseId}/`. Prisma/migrate: correr dentro del contenedor `bot`.
 
 **Entrega (`DeliveryStatus`)**: eje independiente del estado de pago. Crear una venta **reserva** stock (valida `available`, sin movimientos); el `SALIDA` se escribe solo en `/deliver`. `/undeliver` y anular una venta entregada compensan con `ENTRADA`. Anular una venta sin entregar no toca el ledger. Editar (`PATCH`) exige PENDIENTE + sin pagos + `POR_ENTREGAR`.
+
+Notas de entrega (independientes de `Sale`): `GET/POST /delivery-notes` · `GET /delivery-notes/:id` · `POST /delivery-notes/:id/void`  
+Al crear valida `available` y escribe `SALIDA` (`deliveryNoteId`); `showValue` controla si la UI/impresión muestra montos (precios igual se snapshottean). Anular → `ENTRADA` compensatorias. Número serial `NE-#####` en UI.
 
 Reportes: `GET /reports/sales` (`?from=&to=&status=&delivery=&customerId=`) · `GET /reports/kardex` (`?productId=` requerido `&variantId=&from=&to=`, saldo corrido por nivel) · `GET /reports/movements` (`?productId=` requerido `&from=&to=`, ledger plano del producto)
 

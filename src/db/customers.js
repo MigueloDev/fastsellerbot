@@ -57,7 +57,7 @@ export async function createCustomer(data) {
   if (!cedula) {
     throw new CustomerError(
       422,
-      'cedula inválida (V/E + 6–9 dígitos, o solo dígitos)',
+      'cedula inválida (V/E/J + 6–9 dígitos, o solo dígitos)',
     )
   }
 

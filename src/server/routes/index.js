@@ -9,6 +9,7 @@ import metricsRoutes from './metrics.routes.js'
 import reportsRoutes from './reports.routes.js'
 import whatsappRoutes from './whatsapp.routes.js'
 import currencyPurchasesRoutes from './currencyPurchases.routes.js'
+import deliveryNotesRoutes from './deliveryNotes.routes.js'
 
 /**
  * Punto único de montaje. Todos los HTTP viven en plugins → controllers.
@@ -25,4 +26,5 @@ export async function registerRoutes(app, sockBaileys) {
   await app.register(reportsRoutes)
   await app.register(whatsappRoutes)
   await app.register(currencyPurchasesRoutes)
+  await app.register(deliveryNotesRoutes)
 }

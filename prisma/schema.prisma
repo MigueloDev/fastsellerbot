@@ -56,36 +56,38 @@ enum PriceRef {
 }
 
 model Product {
-  id               String           @id @default(cuid())
-  sku              String?          @unique
-  name             String
-  description      String?
-  brand            String?
-  active           Boolean          @default(true)
-  minStock         Int?             @map("min_stock")
-  purchasePriceUsd Decimal?         @db.Decimal(12, 2) @map("purchase_price_usd") // costo de compra USD; required en create/update vía API
-  variants         ProductVariant[]
-  prices           ProductPrice[]
-  movements        StockMovement[]
-  stockLevels      StockLevel[]
-  saleItems        SaleItem[]
-  createdAt        DateTime         @default(now()) @map("created_at")
-  updatedAt        DateTime         @updatedAt @map("updated_at")
+  id                String             @id @default(cuid())
+  sku               String?            @unique
+  name              String
+  description       String?
+  brand             String?
+  active            Boolean            @default(true)
+  minStock          Int?               @map("min_stock")
+  purchasePriceUsd  Decimal?           @db.Decimal(12, 2) @map("purchase_price_usd") // costo de compra USD; required en create/update vía API
+  variants          ProductVariant[]
+  prices            ProductPrice[]
+  movements         StockMovement[]
+  stockLevels       StockLevel[]
+  saleItems         SaleItem[]
+  deliveryNoteItems DeliveryNoteItem[]
+  createdAt         DateTime           @default(now()) @map("created_at")
+  updatedAt         DateTime           @updatedAt @map("updated_at")
 
   @@map("products")
 }
 
 model ProductVariant {
-  id          String          @id @default(cuid())
-  productId   String          @map("product_id")
-  name        String
-  sku         String?         @unique
-  active      Boolean         @default(true)
-  product     Product         @relation(fields: [productId], references: [id])
-  movements   StockMovement[]
-  stockLevels StockLevel[]
-  saleItems   SaleItem[]
-  createdAt   DateTime        @default(now()) @map("created_at")
+  id                String             @id @default(cuid())
+  productId         String             @map("product_id")
+  name              String
+  sku               String?            @unique
+  active            Boolean            @default(true)
+  product           Product            @relation(fields: [productId], references: [id])
+  movements         StockMovement[]
+  stockLevels       StockLevel[]
+  saleItems         SaleItem[]
+  deliveryNoteItems DeliveryNoteItem[]
+  createdAt         DateTime           @default(now()) @map("created_at")
 
   @@map("product_variants")
 }
@@ -97,22 +99,25 @@ enum MovementType {
 }
 
 model StockMovement {
-  id        String       @id @default(cuid())
-  productId String       @map("product_id")
-  variantId String?      @map("variant_id")
-  saleId    String?      @map("sale_id")
-  type      MovementType
-  quantity  Int // siempre positivo; el signo lo da el type (AJUSTE usa delta)
-  delta     Int // efecto real en stock: ENTRADA=+qty, SALIDA=−qty, AJUSTE=±qty
-  unitCost  Decimal?     @db.Decimal(12, 2) @map("unit_cost")
-  note      String?
-  agentName String?      @map("agent_name")
-  createdAt DateTime     @default(now()) @map("created_at")
-  product   Product      @relation(fields: [productId], references: [id])
-  variant   ProductVariant? @relation(fields: [variantId], references: [id])
-  sale      Sale?        @relation(fields: [saleId], references: [id])
+  id             String          @id @default(cuid())
+  productId      String          @map("product_id")
+  variantId      String?         @map("variant_id")
+  saleId         String?         @map("sale_id")
+  deliveryNoteId String?         @map("delivery_note_id")
+  type           MovementType
+  quantity       Int // siempre positivo; el signo lo da el type (AJUSTE usa delta)
+  delta          Int // efecto real en stock: ENTRADA=+qty, SALIDA=−qty, AJUSTE=±qty
+  unitCost       Decimal?        @db.Decimal(12, 2) @map("unit_cost")
+  note           String?
+  agentName      String?         @map("agent_name")
+  createdAt      DateTime        @default(now()) @map("created_at")
+  product        Product         @relation(fields: [productId], references: [id])
+  variant        ProductVariant? @relation(fields: [variantId], references: [id])
+  sale           Sale?           @relation(fields: [saleId], references: [id])
+  deliveryNote   DeliveryNote?   @relation(fields: [deliveryNoteId], references: [id])
 
   @@index([productId, variantId, createdAt(sort: Desc)])
+  @@index([deliveryNoteId])
   @@map("stock_movements")
 }
 
@@ -185,18 +190,19 @@ enum DeliveryStatus {
 }
 
 model Customer {
-  id        String   @id @default(cuid())
-  cedula    String?  @unique // nullable por filas legacy; required en create
-  firstName String   @map("first_name")
-  lastName  String   @map("last_name")
-  name      String // display: `${firstName} ${lastName}`
-  phone     String? // 11 chars: 0XXX + 7 dígitos, o null
-  jid       String?  @unique // link opcional a WhatsApp (futuro wiring Contact)
-  note      String?
-  active    Boolean  @default(true)
-  sales     Sale[]
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id            String         @id @default(cuid())
+  cedula        String?        @unique // nullable por filas legacy; required en create
+  firstName     String         @map("first_name")
+  lastName      String         @map("last_name")
+  name          String // display: `${firstName} ${lastName}`
+  phone         String? // 11 chars: 0XXX + 7 dígitos, o null
+  jid           String?        @unique // link opcional a WhatsApp (futuro wiring Contact)
+  note          String?
+  active        Boolean        @default(true)
+  sales         Sale[]
+  deliveryNotes DeliveryNote[]
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
 
   @@index([lastName, firstName])
   @@map("customers")
@@ -298,4 +304,47 @@ model Payment {
 
   @@index([saleId, paidAt])
   @@map("payments")
+}
+
+enum DeliveryNoteStatus {
+  ACTIVA
+  ANULADA
+}
+
+/** Nota de entrega independiente de Sale: descuenta stock al crear + documento imprimible. */
+model DeliveryNote {
+  id         String             @id @default(cuid())
+  number     Int                @unique @default(autoincrement())
+  customerId String             @map("customer_id")
+  showValue  Boolean            @default(true) @map("show_value")
+  status     DeliveryNoteStatus @default(ACTIVA)
+  note       String?
+  agentName  String?            @map("agent_name")
+  totalUsd   Decimal            @db.Decimal(12, 2) @map("total_usd")
+  createdAt  DateTime           @default(now()) @map("created_at")
+  updatedAt  DateTime           @updatedAt @map("updated_at")
+  voidedAt   DateTime?          @map("voided_at")
+  voidedBy   String?            @map("voided_by")
+  customer   Customer           @relation(fields: [customerId], references: [id])
+  items      DeliveryNoteItem[]
+  movements  StockMovement[]
+
+  @@index([createdAt(sort: Desc)])
+  @@index([status])
+  @@map("delivery_notes")
+}
+
+model DeliveryNoteItem {
+  id             String          @id @default(cuid())
+  deliveryNoteId String          @map("delivery_note_id")
+  productId      String          @map("product_id")
+  variantId      String?         @map("variant_id")
+  quantity       Int
+  unitPriceUsd   Decimal         @db.Decimal(12, 2) @map("unit_price_usd")
+  subtotalUsd    Decimal         @db.Decimal(12, 2) @map("subtotal_usd")
+  deliveryNote   DeliveryNote    @relation(fields: [deliveryNoteId], references: [id])
+  product        Product         @relation(fields: [productId], references: [id])
+  variant        ProductVariant? @relation(fields: [variantId], references: [id])
+
+  @@map("delivery_note_items")
 }

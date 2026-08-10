@@ -96,6 +96,22 @@ export default async function salesRoutes(app) {
 
   app.get('/payments/:id/receipt-url', sales.receiptUrl)
 
+  app.put('/payments/:id/receipt', {
+    bodyLimit: 7 * 1024 * 1024,
+    schema: {
+      body: {
+        type: 'object',
+        required: ['receiptBase64'],
+        additionalProperties: false,
+        properties: {
+          receiptBase64: { type: 'string', minLength: 1 },
+        },
+      },
+    },
+  }, sales.putReceipt)
+
+  app.delete('/payments/:id/receipt', sales.deleteReceipt)
+
   app.post('/sales/:id/deliver', sales.deliver)
   app.post('/sales/:id/undeliver', sales.undeliver)
 

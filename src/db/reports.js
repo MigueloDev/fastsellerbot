@@ -1,5 +1,6 @@
 import { prisma } from './client.js'
 import { balanceUsdOf, round2 } from '../sales/balance.js'
+import { paymentStateOf } from '../sales/paymentState.js'
 import { readRate } from '../rates/store.js'
 
 export class ReportError extends Error {
@@ -43,7 +44,9 @@ function dateWhere({ from, to }, field = 'createdAt') {
  * `/metrics/summary`: **vendido** = ventas no anuladas creadas en el rango,
  * **cobrado** = pagos con `paidAt` en el rango (pueden ser de ventas anteriores).
  *
- * @param {{ from?: Date, to?: Date, status?: string, delivery?: string, customerId?: string }} filters
+ * `paymentState` (PAGADA|ABONADA|CREDITO) filtra en memoria tras mapear filas.
+ *
+ * @param {{ from?: Date, to?: Date, status?: string, delivery?: string, customerId?: string, paymentState?: string }} filters
  */
 export async function getSalesReport({
   from,
@@ -51,6 +54,7 @@ export async function getSalesReport({
   status,
   delivery,
   customerId,
+  paymentState,
 } = {}) {
   /** @type {any} */
   const where = { ...dateWhere({ from, to }) }
@@ -84,11 +88,12 @@ export async function getSalesReport({
     readRate('BCV'),
   ])
 
-  const sales = rows.map((sale) => {
+  let sales = rows.map((sale) => {
     const totalUsd = toNum(sale.totalUsd)
     const collectedUsd = round2(
       sale.payments.reduce((sum, p) => sum + toNum(p.amountUsd), 0),
     )
+    const paymentsCount = sale.payments.length
     return {
       id: sale.id,
       createdAt: sale.createdAt,
@@ -111,15 +116,26 @@ export async function getSalesReport({
       totalUsd,
       collectedUsd,
       balanceUsd: balanceUsdOf({ totalUsd, payments: sale.payments }),
-      paymentsCount: sale.payments.length,
+      paymentsCount,
+      paymentState: paymentStateOf({ status: sale.status, paymentsCount }),
       note: sale.note,
       agentName: sale.agentName,
     }
   })
 
+  if (paymentState) {
+    sales = sales.filter((s) => s.paymentState === paymentState)
+  }
+
   const live = sales.filter((s) => s.status !== 'ANULADA')
   const totalUsd = round2(live.reduce((sum, s) => sum + s.totalUsd, 0))
   const balanceUsd = round2(live.reduce((sum, s) => sum + s.balanceUsd, 0))
+  const unitsSold = live.reduce(
+    (sum, s) => sum + s.items.reduce((n, it) => n + it.quantity, 0),
+    0,
+  )
+  // When filtering by paymentState, cash collected-in-range still uses the
+  // period aggregate (may include payments on sales outside the filtered set).
   const collectedUsd = round2(toNum(collectedAgg._sum.amountUsd))
   const rate = bsRate && bsRate.rate > 0 ? bsRate : null
 
@@ -129,10 +145,12 @@ export async function getSalesReport({
       status: status ?? null,
       delivery: delivery ?? null,
       customerId: customerId ?? null,
+      paymentState: paymentState ?? null,
     },
     totals: {
       count: live.length,
       voidedCount: sales.length - live.length,
+      unitsSold,
       totalUsd,
       collectedUsd,
       collectedCount: collectedAgg._count._all,
@@ -144,6 +162,7 @@ export async function getSalesReport({
     },
     byPriceRef: summarizeByPriceRef(live),
     byDelivery: summarizeByDelivery(live),
+    byPaymentState: summarizeByPaymentState(live),
     byProduct: summarizeByProduct(live),
     sales,
   }
@@ -173,6 +192,29 @@ function summarizeByDelivery(sales) {
     if (!bucket) continue
     bucket.count += 1
     bucket.totalUsd = round2(bucket.totalUsd + sale.totalUsd)
+  }
+  return out
+}
+
+function emptyPaymentBucket() {
+  return { count: 0, unitsSold: 0, totalUsd: 0, collectedUsd: 0, balanceUsd: 0 }
+}
+
+function summarizeByPaymentState(sales) {
+  const out = {
+    PAGADA: emptyPaymentBucket(),
+    ABONADA: emptyPaymentBucket(),
+    CREDITO: emptyPaymentBucket(),
+  }
+  for (const sale of sales) {
+    const bucket = sale.paymentState ? out[sale.paymentState] : null
+    if (!bucket) continue
+    const units = sale.items.reduce((n, it) => n + it.quantity, 0)
+    bucket.count += 1
+    bucket.unitsSold += units
+    bucket.totalUsd = round2(bucket.totalUsd + sale.totalUsd)
+    bucket.collectedUsd = round2(bucket.collectedUsd + sale.collectedUsd)
+    bucket.balanceUsd = round2(bucket.balanceUsd + sale.balanceUsd)
   }
   return out
 }
