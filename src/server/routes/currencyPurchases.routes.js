@@ -30,7 +30,7 @@ export default async function currencyPurchasesRoutes(app) {
     schema: {
       body: {
         type: 'object',
-        required: ['binanceRate', 'usdtReceived'],
+        required: ['binanceRate', 'usdtReceived', 'fromAccountId', 'toAccountId'],
         additionalProperties: false,
         properties: {
           saleId: { type: 'string', minLength: 1 },
@@ -43,6 +43,8 @@ export default async function currencyPurchasesRoutes(app) {
           usdtReceived: { type: 'number', exclusiveMinimum: 0 },
           note: { type: ['string', 'null'] },
           receiptBase64: { type: ['string', 'null'] },
+          fromAccountId: { type: 'string', minLength: 1 },
+          toAccountId: { type: 'string', minLength: 1 },
         },
       },
     },

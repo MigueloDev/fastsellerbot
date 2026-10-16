@@ -1,5 +1,7 @@
 import { prisma } from './client.js'
 import { round2 } from '../sales/balance.js'
+import { applyCashMovementInTx } from '../cash/apply.js'
+import { assertAccountsForConversion } from '../cash/movement.js'
 import {
   saleProfitOf,
   currencyPurchaseProfitOf,
@@ -109,6 +111,8 @@ function serializePurchase(row) {
     hasReceipt: Boolean(receiptPath),
     purchasedAt: rest.purchasedAt,
     createdAt: rest.createdAt,
+    fromAccountId: rest.fromAccountId ?? null,
+    toAccountId: rest.toAccountId ?? null,
     allocations,
     sale: first?.sale ?? undefined,
   }
@@ -287,6 +291,8 @@ export async function findCurrencyPurchaseReceipt(purchaseId) {
  *   note?: string|null,
  *   agentName?: string|null,
  *   receiptPath?: string|null,
+ *   fromAccountId: string,
+ *   toAccountId: string,
  * }} input
  */
 export async function createCurrencyPurchase(input) {
@@ -297,6 +303,8 @@ export async function createCurrencyPurchase(input) {
     note = null,
     agentName = null,
     receiptPath = null,
+    fromAccountId,
+    toAccountId,
   } = input
 
   const rawIds = Array.isArray(input.saleIds) && input.saleIds.length
@@ -307,6 +315,9 @@ export async function createCurrencyPurchase(input) {
   const saleIds = [...new Set(rawIds.map((s) => String(s || '').trim()).filter(Boolean))]
   if (!saleIds.length) {
     throw new CurrencyPurchaseError(422, 'saleIds es requerido')
+  }
+  if (!fromAccountId || !toAccountId) {
+    throw new CurrencyPurchaseError(422, 'fromAccountId y toAccountId son requeridos')
   }
 
   const rate = Number(binanceRate)
@@ -381,7 +392,11 @@ export async function createCurrencyPurchase(input) {
       }
     })
 
-    return tx.currencyPurchase.create({
+    const from = await tx.cashAccount.findUnique({ where: { id: fromAccountId } })
+    const to = await tx.cashAccount.findUnique({ where: { id: toAccountId } })
+    assertAccountsForConversion(from, to)
+
+    const created = await tx.currencyPurchase.create({
       data: {
         ...(purchaseId ? { id: purchaseId } : {}),
         binanceRate: rateRounded,
@@ -393,10 +408,31 @@ export async function createCurrencyPurchase(input) {
         note: note?.trim() || null,
         agentName,
         receiptPath: receiptPath || null,
+        fromAccountId,
+        toAccountId,
         allocations: { create: allocCreate },
       },
       include: PURCHASE_INCLUDE,
     })
+
+    await applyCashMovementInTx(tx, {
+      accountId: from.id,
+      type: 'SALIDA',
+      amount: bsSpentTotal,
+      note: note?.trim() || null,
+      agentName,
+      currencyPurchaseId: created.id,
+    })
+    await applyCashMovementInTx(tx, {
+      accountId: to.id,
+      type: 'ENTRADA',
+      amount: round2(usdtRounded),
+      note: note?.trim() || null,
+      agentName,
+      currencyPurchaseId: created.id,
+    })
+
+    return created
   })
 
   return serializePurchase(created)

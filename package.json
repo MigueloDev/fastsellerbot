@@ -9,9 +9,10 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node --test src/sales/paymentMethods.test.js src/sales/balance.test.js src/sales/paymentRate.test.js src/sales/paymentState.test.js src/sales/receivablesSummary.test.js src/sales/availability.test.js src/sales/pricing.test.js src/sales/receipt.test.js src/sales/profit.test.js src/customers/validate.test.js src/deliveryNotes/totals.test.js",
+    "test": "node --test src/sales/paymentMethods.test.js src/sales/balance.test.js src/sales/paymentRate.test.js src/sales/paymentState.test.js src/sales/receivablesSummary.test.js src/sales/availability.test.js src/sales/pricing.test.js src/sales/receipt.test.js src/sales/profit.test.js src/customers/validate.test.js src/deliveryNotes/totals.test.js src/server/fxCsv.test.js src/server/roles.test.js src/cash/movement.test.js",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
     "db:push": "prisma db push",
     "db:studio": "prisma studio"
   },

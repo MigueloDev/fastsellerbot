@@ -5,6 +5,14 @@ import {
   updateProduct,
   deactivateProduct,
 } from '../../db/products.js'
+import { redactProductForSeller } from '../roles.js'
+
+function present(request, product) {
+  if (request.user?.role !== 'VENDEDOR') return product
+  return Array.isArray(product)
+    ? product.map(redactProductForSeller)
+    : redactProductForSeller(product)
+}
 
 /** @returns {string|null} error message if invalid */
 export function validatePriceUniques(prices) {
@@ -25,7 +33,7 @@ export async function list(request, reply) {
   try {
     const includeInactive =
       request.query.includeInactive === 'true' || request.query.includeInactive === true
-    return await listProducts({ includeInactive })
+    return present(request, await listProducts({ includeInactive }))
   } catch (err) {
     throw err
   }
@@ -38,7 +46,7 @@ export async function get(request, reply) {
       reply.status(404).send({ error: 'Producto no encontrado' })
       return
     }
-    return product
+    return present(request, product)
   } catch (err) {
     throw err
   }

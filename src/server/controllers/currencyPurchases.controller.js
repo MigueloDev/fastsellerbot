@@ -7,6 +7,7 @@ import {
   CurrencyPurchaseError,
 } from '../../db/currencyPurchases.js'
 import { parseReceiptBase64, ReceiptError } from '../../sales/receipt.js'
+import { CashError } from '../../cash/movement.js'
 import {
   deletePaymentReceipt,
   signedReceiptUrl,
@@ -20,7 +21,8 @@ function agentNameOf(request) {
 function handleError(err, reply) {
   if (
     err instanceof CurrencyPurchaseError ||
-    err instanceof ReceiptError
+    err instanceof ReceiptError ||
+    err instanceof CashError
   ) {
     reply.status(err.status).send({ error: err.message })
     return true
@@ -97,6 +99,8 @@ export async function create(request, reply) {
       note: body.note,
       agentName: agentNameOf(request),
       receiptPath: uploadedPath,
+      fromAccountId: body.fromAccountId,
+      toAccountId: body.toAccountId,
     })
     reply.status(201).send(purchase)
   } catch (err) {

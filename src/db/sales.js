@@ -14,6 +14,8 @@ import { saleProfitOf } from '../sales/profit.js'
 import { readRate } from '../rates/store.js'
 import { getRateById } from './rates.js'
 import { stampClosingProfitIfNeeded } from './currencyPurchases.js'
+import { applyCashMovementInTx } from '../cash/apply.js'
+import { assertAccountForPayment } from '../cash/movement.js'
 
 export class SaleError extends Error {
   /**
@@ -155,10 +157,10 @@ function assertSaleInput({ customerId, priceRef, items }) {
 }
 
 /**
- * @param {{ customerId: string, priceRef: 'REF_USD'|'REF_BS', items: Array<{productId:string, variantId?:string|null, quantity:number, unitPriceUsd?:number}>, note?: string|null, agentName?: string|null }} input
+ * @param {{ customerId: string, priceRef: 'REF_USD'|'REF_BS', items: Array<{productId:string, variantId?:string|null, quantity:number, unitPriceUsd?:number}>, note?: string|null, agentName?: string|null, sellerId?: string|null }} input
  */
 export async function createSale(input) {
-  const { customerId, priceRef, items, note = null, agentName = null } = input
+  const { customerId, priceRef, items, note = null, agentName = null, sellerId = null } = input
   assertSaleInput({ customerId, priceRef, items })
 
   try {
@@ -181,6 +183,7 @@ export async function createSale(input) {
           totalUsd,
           note: note?.trim() || null,
           agentName,
+          sellerId,
           status: 'PENDIENTE',
           items: {
             create: resolved.map((it) => ({
@@ -296,15 +299,25 @@ export async function updateSale(saleId, input) {
  *   agentName?: string|null,
  *   receiptPath?: string|null,
  *   rateId?: string|null,
+ *   accountId: string,
  * }} input
  */
 export async function addPayment(saleId, input) {
-  const { method, amount, note = null, agentName = null, receiptPath = null, rateId = null } = input
+  const {
+    method,
+    amount,
+    note = null,
+    agentName = null,
+    receiptPath = null,
+    rateId = null,
+    accountId,
+  } = input
 
   if (!PAYMENT_METHODS[method]) throw new SaleError(422, `Método inválido: ${method}`)
   if (typeof amount !== 'number' || !(amount > 0)) {
     throw new SaleError(422, 'amount debe ser > 0')
   }
+  if (!accountId) throw new SaleError(422, 'accountId es requerido')
 
   const currency = currencyFor(method)
   // Snapshot BCV on every payment (audit); BS conversion uses same quote.
@@ -317,7 +330,7 @@ export async function addPayment(saleId, input) {
   if (resolvedQuote.error) {
     throw new SaleError(resolvedQuote.error.status, resolvedQuote.error.message)
   }
-  const rateUsed = resolvedQuote.quote.rate
+  const rateUsed = round2(resolvedQuote.quote.rate)
   const rateSource = 'BCV'
   const rawAmountUsd =
     currency === 'BS' ? round2(amount / rateUsed) : round2(amount)
@@ -341,9 +354,13 @@ export async function addPayment(saleId, input) {
     // ponytail: absorbe ≤$0.10 de redondeo Bs→USD para libro en $0 exacto
     const amountUsd = settleCreditUsd(rawAmountUsd, balance)
 
-    await tx.payment.create({
+    const account = await tx.cashAccount.findUnique({ where: { id: accountId } })
+    assertAccountForPayment(account, currency)
+
+    const payment = await tx.payment.create({
       data: {
         saleId,
+        accountId,
         method,
         currency,
         amount: round2(amount),
@@ -354,6 +371,15 @@ export async function addPayment(saleId, input) {
         agentName,
         receiptPath: receiptPath || null,
       },
+    })
+
+    await applyCashMovementInTx(tx, {
+      accountId,
+      type: 'ENTRADA',
+      amount: round2(amount),
+      note: note?.trim() || null,
+      agentName,
+      paymentId: payment.id,
     })
 
     const withPayments = await tx.sale.findUnique({
@@ -574,12 +600,13 @@ export async function findSale(id) {
 }
 
 /**
- * @param {{ status?: string, delivery?: string, customerId?: string, from?: string, to?: string, limit?: number, offset?: number }} filters
+ * @param {{ status?: string, delivery?: string, customerId?: string, sellerId?: string, from?: string, to?: string, limit?: number, offset?: number }} filters
  */
 export async function listSales({
   status,
   delivery,
   customerId,
+  sellerId,
   from,
   to,
   limit = 50,
@@ -591,6 +618,7 @@ export async function listSales({
   if (status) where.status = status
   if (delivery) where.deliveryStatus = delivery
   if (customerId) where.customerId = customerId
+  if (sellerId) where.sellerId = sellerId
   if (from || to) {
     where.createdAt = {}
     if (from) where.createdAt.gte = new Date(from)

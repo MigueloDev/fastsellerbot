@@ -80,11 +80,12 @@ export default async function salesRoutes(app) {
     schema: {
       body: {
         type: 'object',
-        required: ['method', 'amount'],
+        required: ['method', 'amount', 'accountId'],
         additionalProperties: false,
         properties: {
           method: { type: 'string', enum: PAYMENT_METHOD_KEYS },
           amount: { type: 'number', exclusiveMinimum: 0 },
+          accountId: { type: 'string', minLength: 1 },
           note: { type: ['string', 'null'] },
           receiptBase64: { type: ['string', 'null'] },
           // Fila BCV histórica (GET /rates/history); sin ella → tasa live.

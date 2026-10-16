@@ -51,10 +51,11 @@ export async function balanceView(sale, readRateFn) {
   if (!bsRate || !(bsRate.rate > 0)) {
     return { balanceUsd, balanceBs: null, bsRate: null }
   }
+  const rate = round2(bsRate.rate)
   return {
     balanceUsd,
-    balanceBs: round2(balanceUsd * bsRate.rate),
-    bsRate: { rate: bsRate.rate, fetchedAt: bsRate.fetchedAt },
+    balanceBs: round2(balanceUsd * rate),
+    bsRate: { rate, fetchedAt: bsRate.fetchedAt },
   }
 }
 

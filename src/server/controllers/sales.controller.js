@@ -14,6 +14,7 @@ import {
   SaleError,
 } from '../../db/sales.js'
 import { StockError } from '../../db/stock.js'
+import { CashError } from '../../cash/movement.js'
 import { balanceView } from '../../sales/balance.js'
 import { matchesPriceRef } from '../../sales/paymentMethods.js'
 import { summarizeReceivables } from '../../sales/receivablesSummary.js'
@@ -23,6 +24,31 @@ import {
   signedReceiptUrl,
   uploadPaymentReceipt,
 } from '../../storage/receipts.js'
+import { ownsSale, redactSaleForSeller } from '../roles.js'
+
+function isSeller(request) {
+  return request.user?.role === 'VENDEDOR'
+}
+
+async function present(request, sale) {
+  const body = await saleResponse(sale)
+  return isSeller(request) ? redactSaleForSeller(body) : body
+}
+
+/** @returns {Promise<boolean>} false si ya respondió 404/403 */
+async function sellerOwns(request, reply, saleId) {
+  if (!isSeller(request)) return true
+  const sale = await findSale(saleId)
+  if (!sale) {
+    reply.status(404).send({ error: 'Venta no encontrada' })
+    return false
+  }
+  if (!ownsSale(sale, request.user?.staffId)) {
+    reply.status(403).send({ error: 'No autorizado' })
+    return false
+  }
+  return true
+}
 
 function agentNameOf(request) {
   return request.user?.name ?? 'Agente'
@@ -32,7 +58,8 @@ function handleError(err, reply) {
   if (
     err instanceof SaleError ||
     err instanceof StockError ||
-    err instanceof ReceiptError
+    err instanceof ReceiptError ||
+    err instanceof CashError
   ) {
     reply.status(err.status).send({ error: err.message })
     return true
@@ -66,12 +93,13 @@ export async function list(request, reply) {
       status,
       delivery,
       customerId,
+      sellerId: isSeller(request) ? request.user.staffId : undefined,
       from,
       to,
       limit: safeLimit,
       offset: safeOffset,
     })
-    const items = await Promise.all(page.items.map(saleResponse))
+    const items = await Promise.all(page.items.map((sale) => present(request, sale)))
     return { ...page, items }
   } catch (err) {
     if (handleError(err, reply)) return
@@ -86,7 +114,11 @@ export async function get(request, reply) {
       reply.status(404).send({ error: 'Venta no encontrada' })
       return
     }
-    return await saleResponse(sale)
+    if (isSeller(request) && !ownsSale(sale, request.user?.staffId)) {
+      reply.status(403).send({ error: 'No autorizado' })
+      return
+    }
+    return await present(request, sale)
   } catch (err) {
     if (handleError(err, reply)) return
     throw err
@@ -102,8 +134,9 @@ export async function create(request, reply) {
       items: body.items,
       note: body.note,
       agentName: agentNameOf(request),
+      sellerId: request.user?.staffId ?? null,
     })
-    reply.status(201).send(await saleResponse(sale))
+    reply.status(201).send(await present(request, sale))
   } catch (err) {
     if (handleError(err, reply)) return
     throw err
@@ -130,6 +163,7 @@ export async function update(request, reply) {
 export async function pay(request, reply) {
   let uploadedPath = null
   try {
+    if (!(await sellerOwns(request, reply, request.params.id))) return
     const parsed = parseReceiptBase64(request.body.receiptBase64)
     if (parsed) {
       uploadedPath = await uploadPaymentReceipt(
@@ -145,8 +179,9 @@ export async function pay(request, reply) {
       agentName: agentNameOf(request),
       receiptPath: uploadedPath,
       rateId: request.body.rateId || null,
+      accountId: request.body.accountId,
     })
-    return await saleResponse(sale)
+    return await present(request, sale)
   } catch (err) {
     if (uploadedPath) await deletePaymentReceipt(uploadedPath)
     if (handleError(err, reply)) return
@@ -161,6 +196,7 @@ export async function receiptUrl(request, reply) {
       reply.status(404).send({ error: 'Pago no encontrado' })
       return
     }
+    if (!(await sellerOwns(request, reply, payment.saleId))) return
     if (!payment.receiptPath) {
       reply.status(404).send({ error: 'Este pago no tiene comprobante' })
       return
@@ -233,6 +269,7 @@ export async function void_(request, reply) {
 
 export async function deliver(request, reply) {
   try {
+    if (!(await sellerOwns(request, reply, request.params.id))) return
     const sale = await deliverSale(request.params.id, {
       agentName: agentNameOf(request),
     })

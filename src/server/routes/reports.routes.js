@@ -51,4 +51,31 @@ export default async function reportsRoutes(app) {
       },
     },
   }, reports.movements)
+
+  app.get('/reports/fx/csv', {
+    schema: {
+      querystring: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          from: { type: 'string' },
+          to: { type: 'string' },
+          mode: { type: 'string', enum: ['detail', 'summary'], default: 'detail' },
+        },
+      },
+    },
+  }, reports.fxCsv)
+
+  app.get('/reports/fx', {
+    schema: {
+      querystring: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          from: { type: 'string' },
+          to: { type: 'string' },
+        },
+      },
+    },
+  }, reports.fx)
 }

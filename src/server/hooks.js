@@ -1,4 +1,6 @@
 import { verifyClerkToken, extractToken } from './auth.js'
+import { resolveStaff } from '../db/staff.js'
+import { sellerCanAccess } from './roles.js'
 
 export function registerAuthHook(app) {
   app.addHook('preHandler', async (request, reply) => {
@@ -16,7 +18,20 @@ export function registerAuthHook(app) {
       return
     }
 
-    // Adjuntar usuario al request para usarlo en las rutas
-    request.user = user
+    const staff = await resolveStaff({
+      clerkUserId: user.userId,
+      email: user.email,
+      name: user.name,
+    })
+    request.user = {
+      ...user,
+      staffId: staff.id,
+      role: staff.role,
+    }
+
+    if (staff.role !== 'ADMIN' && !sellerCanAccess(request.method, pathname)) {
+      reply.status(403).send({ error: 'No autorizado' })
+      return
+    }
   })
 }

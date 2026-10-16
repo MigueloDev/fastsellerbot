@@ -1,6 +1,7 @@
 import { prisma } from './client.js'
 import { balanceUsdOf, round2 } from '../sales/balance.js'
 import { paymentStateOf } from '../sales/paymentState.js'
+import { fxAvailability, expectedUsdt } from '../sales/profit.js'
 import { readRate } from '../rates/store.js'
 
 export class ReportError extends Error {
@@ -138,6 +139,7 @@ export async function getSalesReport({
   // period aggregate (may include payments on sales outside the filtered set).
   const collectedUsd = round2(toNum(collectedAgg._sum.amountUsd))
   const rate = bsRate && bsRate.rate > 0 ? bsRate : null
+  const rate2 = rate ? round2(rate.rate) : null
 
   return {
     period: { from: from?.toISOString() ?? null, to: to?.toISOString() ?? null },
@@ -155,10 +157,10 @@ export async function getSalesReport({
       collectedUsd,
       collectedCount: collectedAgg._count._all,
       balanceUsd,
-      totalBs: rate ? round2(totalUsd * rate.rate) : null,
-      collectedBs: rate ? round2(collectedUsd * rate.rate) : null,
-      balanceBs: rate ? round2(balanceUsd * rate.rate) : null,
-      bsRate: rate ? { rate: rate.rate, fetchedAt: rate.fetchedAt } : null,
+      totalBs: rate2 != null ? round2(totalUsd * rate2) : null,
+      collectedBs: rate2 != null ? round2(collectedUsd * rate2) : null,
+      balanceBs: rate2 != null ? round2(balanceUsd * rate2) : null,
+      bsRate: rate2 != null ? { rate: rate2, fetchedAt: rate.fetchedAt } : null,
     },
     byPriceRef: summarizeByPriceRef(live),
     byDelivery: summarizeByDelivery(live),
@@ -408,5 +410,144 @@ export async function getProductMovements({ productId, from, to } = {}) {
     totals: { totalIn, totalOut, count: movements.length },
     truncated,
     movements,
+  }
+}
+
+// ────────────────────── Conciliación ventas ↔ divisas ──────────────────────
+
+/** USDT a 6 dp (mismo techo que `profit.js`). */
+function roundUsdt(n) {
+  return Math.round(n * 1e6) / 1e6
+}
+
+function profitFromAllocs(allocations = []) {
+  let any = false
+  let sum = 0
+  for (const a of allocations) {
+    if (a.profitUsd != null) {
+      any = true
+      sum += toNum(a.profitUsd)
+    }
+  }
+  return any ? round2(sum) : null
+}
+
+/**
+ * Conciliación Bs cobrados vs convertidos a USDT.
+ *
+ * Ventas: `createdAt` en rango, historial completo de pagos/allocations
+ * (la identidad `bsCobrados = bsConvertidos + bsPendientes` siempre cuadra).
+ * Compras: `purchasedAt` en rango, tabla independiente.
+ *
+ * @param {{ from?: Date, to?: Date }} filters
+ */
+export async function getFxReport({ from, to } = {}) {
+  const [salesRows, purchaseRows] = await Promise.all([
+    prisma.sale.findMany({
+      where: {
+        status: { not: 'ANULADA' },
+        payments: { some: { currency: 'BS' } },
+        ...dateWhere({ from, to }),
+      },
+      include: {
+        customer: { select: { id: true, name: true, cedula: true } },
+        payments: true,
+        currencyPurchaseAllocations: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.currencyPurchase.findMany({
+      where: dateWhere({ from, to }, 'purchasedAt'),
+      include: { allocations: { select: { saleId: true } } },
+      orderBy: { purchasedAt: 'desc' },
+    }),
+  ])
+
+  const sales = salesRows.map((sale) => {
+    const fx = fxAvailability(sale.payments, sale.currencyPurchaseAllocations)
+    return {
+      id: sale.id,
+      createdAt: sale.createdAt,
+      customer: sale.customer,
+      status: sale.status,
+      paymentState: paymentStateOf({
+        status: sale.status,
+        paymentsCount: sale.payments.length,
+      }),
+      totalUsd: toNum(sale.totalUsd),
+      bsCollected: fx.totalBs,
+      bsConverted: fx.bsConverted,
+      bsPending: fx.bsAvailable,
+      usdtReceived: fx.usdtReceived,
+      usdCollected: fx.totalUsdCollected,
+      profitUsd: profitFromAllocs(sale.currencyPurchaseAllocations),
+      paymentsCount: sale.payments.length,
+      purchasesCount: sale.currencyPurchaseAllocations.length,
+    }
+  })
+
+  const purchases = purchaseRows.map((p) => {
+    const bsSpent = toNum(p.bsSpent)
+    const usdt = toNum(p.usdtReceived)
+    const expected = expectedUsdt(bsSpent, toNum(p.binanceRate))
+    const saleIds = (p.allocations ?? []).map((a) => a.saleId)
+    return {
+      id: p.id,
+      purchasedAt: p.purchasedAt,
+      binanceRate: toNum(p.binanceRate),
+      bsSpent,
+      usdtReceived: usdt,
+      expectedUsdt: expected,
+      diffUsdt: expected != null ? roundUsdt(usdt - expected) : null,
+      salesCount: saleIds.length,
+      saleIds,
+      note: p.note,
+      agentName: p.agentName,
+    }
+  })
+
+  let bsCollected = 0
+  let bsConverted = 0
+  let bsPending = 0
+  let usdtReceived = 0
+  let usdCollected = 0
+  let profitSum = 0
+  let anyProfit = false
+
+  for (const s of sales) {
+    bsCollected += s.bsCollected
+    bsConverted += s.bsConverted
+    bsPending += s.bsPending
+    usdtReceived += s.usdtReceived
+    usdCollected += s.usdCollected
+    if (s.profitUsd != null) {
+      anyProfit = true
+      profitSum += s.profitUsd
+    }
+  }
+
+  let purchasesBsSpent = 0
+  let purchasesUsdt = 0
+  for (const p of purchases) {
+    purchasesBsSpent += p.bsSpent
+    purchasesUsdt += p.usdtReceived
+  }
+
+  return {
+    period: { from: from?.toISOString() ?? null, to: to?.toISOString() ?? null },
+    totals: {
+      count: sales.length,
+      bsCollected: round2(bsCollected),
+      bsConverted: round2(bsConverted),
+      bsPending: round2(bsPending),
+      usdtReceived: roundUsdt(usdtReceived),
+      usdCollected: round2(usdCollected),
+      profitUsd: anyProfit ? round2(profitSum) : null,
+      purchasesCount: purchases.length,
+      purchasesBsSpent: round2(purchasesBsSpent),
+      purchasesUsdt: roundUsdt(purchasesUsdt),
+    },
+    sales,
+    purchases,
   }
 }

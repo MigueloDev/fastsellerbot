@@ -2,6 +2,7 @@ import Fastify from 'fastify'
 import { Server } from 'socket.io'
 import { registerAuthHook } from './hooks.js'
 import { verifyClerkToken } from './auth.js'
+import { resolveStaff } from '../db/staff.js'
 import { EVENTS } from './events.js'
 import { getWhatsAppState } from '../baileys/status.js'
 
@@ -85,7 +86,16 @@ export async function createAppServer(sockBaileys) {
       next(new Error('No autorizado'))
       return
     }
-    socket.user = user
+    const staff = await resolveStaff({
+      clerkUserId: user.userId,
+      email: user.email,
+      name: user.name,
+    })
+    if (staff.role !== 'ADMIN') {
+      next(new Error('No autorizado'))
+      return
+    }
+    socket.user = { ...user, staffId: staff.id, role: staff.role }
     next()
   })
 
