@@ -189,6 +189,19 @@ enum DeliveryStatus {
   ENTREGADA    // mercancía entregada: SALIDA escrita, stock físico descontado
 }
 
+enum DeliveryType {
+  RETIRO   // el cliente retira; sin dirección
+  DELIVERY // entrega local
+  FORANEA  // envío a otra ciudad
+}
+
+enum SaleChargeKind {
+  DELIVERY
+  ENVIO
+  COMISION
+  OTRO
+}
+
 enum StaffRole {
   ADMIN
   VENDEDOR
@@ -209,11 +222,16 @@ model Staff {
 
 model Customer {
   id            String         @id @default(cuid())
+  clientId      String?        @unique @map("client_id") // UUID del cliente móvil, idempotencia offline
   cedula        String?        @unique // nullable por filas legacy; required en create
   firstName     String         @map("first_name")
   lastName      String         @map("last_name")
   name          String // display: `${firstName} ${lastName}`
   phone         String? // 11 chars: 0XXX + 7 dígitos, o null
+  address          String? // última dirección de entrega usada
+  addressReference String?  @map("address_reference")
+  lat              Decimal?  @db.Decimal(9, 6)
+  lng              Decimal?  @db.Decimal(9, 6)
   jid           String?        @unique // link opcional a WhatsApp (futuro wiring Contact)
   note          String?
   active        Boolean        @default(true)
@@ -228,13 +246,20 @@ model Customer {
 
 model Sale {
   id               String            @id @default(cuid())
+  clientId         String?           @unique @map("client_id") // UUID del cliente móvil, idempotencia offline
   customerId       String            @map("customer_id")
   status           SaleStatus        @default(PENDIENTE)
   deliveryStatus   DeliveryStatus    @default(POR_ENTREGAR) @map("delivery_status")
   deliveredAt      DateTime?         @map("delivered_at")
   deliveredBy      String?           @map("delivered_by")
+  deliveryType      DeliveryType      @default(RETIRO) @map("delivery_type")
+  deliveryAddress   String?           @map("delivery_address")
+  deliveryReference String?           @map("delivery_reference")
+  deliveryLat       Decimal?          @db.Decimal(9, 6) @map("delivery_lat")
+  deliveryLng       Decimal?          @db.Decimal(9, 6) @map("delivery_lng")
   priceRef         PriceRef          @map("price_ref") // modo de precio de TODA la venta — sin híbridos
   totalUsd         Decimal           @db.Decimal(12, 2) @map("total_usd") // congelado al crear
+  evidencePath     String?           @map("evidence_path") // path interno Supabase Storage; API expone hasEvidence
   note             String?
   agentName        String?           @map("agent_name")
   sellerId         String?           @map("seller_id")
@@ -243,6 +268,7 @@ model Sale {
   customer                    Customer                     @relation(fields: [customerId], references: [id])
   seller                      Staff?                       @relation(fields: [sellerId], references: [id])
   items                       SaleItem[]
+  charges                     SaleCharge[]
   payments                    Payment[]
   movements                   StockMovement[]
   currencyPurchaseAllocations CurrencyPurchaseAllocation[]
@@ -270,6 +296,22 @@ model SaleItem {
 }
 
 /** Compra de USDT (un trade Binance). N ventas vía CurrencyPurchaseAllocation. */
+/** Monto extra de una venta: cobrado al cliente (suma a totalUsd) o gasto interno (resta ganancia). */
+model SaleCharge {
+  id               String         @id @default(cuid())
+  saleId           String         @map("sale_id")
+  kind             SaleChargeKind
+  description      String?
+  amountUsd        Decimal        @db.Decimal(12, 2) @map("amount_usd")
+  billedToCustomer Boolean        @default(false) @map("billed_to_customer")
+  agentName        String?        @map("agent_name")
+  createdAt        DateTime       @default(now()) @map("created_at")
+  sale             Sale           @relation(fields: [saleId], references: [id])
+
+  @@index([saleId])
+  @@map("sale_charges")
+}
+
 model CurrencyPurchase {
   id             String                       @id @default(cuid())
   binanceRate    Decimal                      @db.Decimal(14, 4) @map("binance_rate") // Bs/USDT ingresada al comprar
@@ -317,6 +359,7 @@ model CurrencyPurchaseAllocation {
 
 model Payment {
   id           String          @id @default(cuid())
+  clientId     String?         @unique @map("client_id") // UUID del cliente móvil, idempotencia offline
   saleId       String          @map("sale_id")
   accountId    String?         @map("account_id") // nullable: pagos legacy
   method       PaymentMethod

@@ -12,6 +12,7 @@ import currencyPurchasesRoutes from './currencyPurchases.routes.js'
 import deliveryNotesRoutes from './deliveryNotes.routes.js'
 import cashAccountsRoutes from './cashAccounts.routes.js'
 import staffRoutes from './staff.routes.js'
+import mobileRoutes from './mobile.routes.js'
 
 /**
  * Punto único de montaje. Todos los HTTP viven en plugins → controllers.
@@ -31,4 +32,5 @@ export async function registerRoutes(app, sockBaileys) {
   await app.register(deliveryNotesRoutes)
   await app.register(cashAccountsRoutes)
   await app.register(staffRoutes)
+  await app.register(mobileRoutes)
 }

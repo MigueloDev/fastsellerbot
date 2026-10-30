@@ -1,4 +1,5 @@
-import { redisConnection } from '../queue/client.js'
+// Caché Redis desactivada (Upstash free): Postgres directo.
+// import { redisConnection } from '../queue/client.js'
 import { getLatestRate, insertRate } from '../db/rates.js'
 
 const REDIS_KEYS = {
@@ -18,10 +19,10 @@ function redisKey(source) {
  */
 export async function storeRate(source, rate, fetchedAt = new Date()) {
   const saved = await insertRate(source, rate, fetchedAt)
-  const key = redisKey(source)
-  if (key) {
-    await redisConnection.set(key, JSON.stringify(saved))
-  }
+  // const key = redisKey(source)
+  // if (key) {
+  //   await redisConnection.set(key, JSON.stringify(saved))
+  // }
   return saved
 }
 
@@ -31,19 +32,19 @@ export async function storeRate(source, rate, fetchedAt = new Date()) {
  * @returns {Promise<{ rate: number, fetchedAt: string }|null>}
  */
 export async function readRate(source) {
-  const key = redisKey(source)
-  if (key) {
-    const raw = await redisConnection.get(key)
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw)
-        if (Number.isFinite(parsed?.rate) && parsed?.fetchedAt) {
-          return { rate: Number(parsed.rate), fetchedAt: String(parsed.fetchedAt) }
-        }
-      } catch {
-        // fall through to PG
-      }
-    }
-  }
+  // const key = redisKey(source)
+  // if (key) {
+  //   const raw = await redisConnection.get(key)
+  //   if (raw) {
+  //     try {
+  //       const parsed = JSON.parse(raw)
+  //       if (Number.isFinite(parsed?.rate) && parsed?.fetchedAt) {
+  //         return { rate: Number(parsed.rate), fetchedAt: String(parsed.fetchedAt) }
+  //       }
+  //     } catch {
+  //       // fall through to PG
+  //     }
+  //   }
+  // }
   return getLatestRate(source)
 }

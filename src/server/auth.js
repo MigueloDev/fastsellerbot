@@ -17,7 +17,8 @@ export async function verifyClerkToken(token) {
       [payload.firstName, payload.lastName].filter(Boolean).join(' ') || 'Agente'
 
     return { userId: payload.sub, email, name }
-  } catch {
+  } catch (error) {
+    console.error('verifyClerkToken error:', error)
     return null
   }
 }

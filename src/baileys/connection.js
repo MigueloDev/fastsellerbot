@@ -1,7 +1,9 @@
 import { useRedisAuthStateWithHSet } from 'baileys-redis-auth'
+import { redisOptions } from '../lib/redisOptions.js'
 import makeWASocket, { Browsers, fetchLatestBaileysVersion } from '@whiskeysockets/baileys'
 
-const { REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, SESSION_ID } = process.env
+// const { REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, SESSION_ID } = process.env
+const { SESSION_ID } = process.env
 
 // ponytail: mute Baileys pino without adding a pino dep
 const silentLogger = {
@@ -18,13 +20,14 @@ const silentLogger = {
 }
 
 export async function createConnection() {
-  const redisOptions = {
-    host: REDIS_HOST,
-    port: Number(REDIS_PORT),
-    ...(REDIS_PASSWORD && { password: REDIS_PASSWORD }),
-  }
+  // const redisOptions = {
+  //   host: REDIS_HOST,
+  //   port: Number(REDIS_PORT),
+  //   ...(REDIS_PASSWORD && { password: REDIS_PASSWORD }),
+  //   ...(process.env.REDIS_TLS === 'true' && { tls: {} }), // Upstash exige TLS
+  // }
   const { state, saveCreds, redis } = await useRedisAuthStateWithHSet(
-    redisOptions,
+    redisOptions(),
     SESSION_ID,
     /* console.log */
   )

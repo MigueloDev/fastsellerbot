@@ -2,6 +2,7 @@ import { prisma } from './client.js'
 import { balanceUsdOf, round2 } from '../sales/balance.js'
 import { paymentStateOf } from '../sales/paymentState.js'
 import { fxAvailability, expectedUsdt } from '../sales/profit.js'
+import { chargesTotals } from '../sales/charges.js'
 import { readRate } from '../rates/store.js'
 
 export class ReportError extends Error {
@@ -47,13 +48,14 @@ function dateWhere({ from, to }, field = 'createdAt') {
  *
  * `paymentState` (PAGADA|ABONADA|CREDITO) filtra en memoria tras mapear filas.
  *
- * @param {{ from?: Date, to?: Date, status?: string, delivery?: string, customerId?: string, paymentState?: string }} filters
+ * @param {{ from?: Date, to?: Date, status?: string, delivery?: string, deliveryType?: string, customerId?: string, paymentState?: string }} filters
  */
 export async function getSalesReport({
   from,
   to,
   status,
   delivery,
+  deliveryType,
   customerId,
   paymentState,
 } = {}) {
@@ -61,6 +63,7 @@ export async function getSalesReport({
   const where = { ...dateWhere({ from, to }) }
   if (status) where.status = status
   if (delivery) where.deliveryStatus = delivery
+  if (deliveryType) where.deliveryType = deliveryType
   if (customerId) where.customerId = customerId
 
   const [rows, collectedAgg, bsRate] = await Promise.all([
@@ -74,6 +77,7 @@ export async function getSalesReport({
             variant: { select: { id: true, name: true } },
           },
         },
+        charges: true,
         payments: { orderBy: { paidAt: 'asc' } },
       },
       orderBy: { createdAt: 'desc' },
@@ -101,6 +105,8 @@ export async function getSalesReport({
       status: sale.status,
       deliveryStatus: sale.deliveryStatus,
       deliveredAt: sale.deliveredAt,
+      deliveryType: sale.deliveryType,
+      ...chargesTotals(sale.charges),
       priceRef: sale.priceRef,
       customerId: sale.customerId,
       customerName: sale.customer?.name ?? '—',
@@ -131,6 +137,7 @@ export async function getSalesReport({
   const live = sales.filter((s) => s.status !== 'ANULADA')
   const totalUsd = round2(live.reduce((sum, s) => sum + s.totalUsd, 0))
   const balanceUsd = round2(live.reduce((sum, s) => sum + s.balanceUsd, 0))
+  const expensesUsd = round2(live.reduce((sum, s) => sum + s.expensesUsd, 0))
   const unitsSold = live.reduce(
     (sum, s) => sum + s.items.reduce((n, it) => n + it.quantity, 0),
     0,
@@ -146,6 +153,7 @@ export async function getSalesReport({
     filters: {
       status: status ?? null,
       delivery: delivery ?? null,
+      deliveryType: deliveryType ?? null,
       customerId: customerId ?? null,
       paymentState: paymentState ?? null,
     },
@@ -157,6 +165,7 @@ export async function getSalesReport({
       collectedUsd,
       collectedCount: collectedAgg._count._all,
       balanceUsd,
+      expensesUsd,
       totalBs: rate2 != null ? round2(totalUsd * rate2) : null,
       collectedBs: rate2 != null ? round2(collectedUsd * rate2) : null,
       balanceBs: rate2 != null ? round2(balanceUsd * rate2) : null,

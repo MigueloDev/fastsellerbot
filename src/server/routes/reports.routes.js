@@ -11,6 +11,7 @@ export default async function reportsRoutes(app) {
           to: { type: 'string' },
           status: { type: 'string', enum: ['PENDIENTE', 'PAGADA', 'ANULADA'] },
           delivery: { type: 'string', enum: ['POR_ENTREGAR', 'ENTREGADA'] },
+          deliveryType: { type: 'string', enum: ['RETIRO', 'DELIVERY', 'FORANEA'] },
           customerId: { type: 'string' },
           paymentState: {
             type: 'string',

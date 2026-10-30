@@ -7,6 +7,7 @@ import {
   CashError,
 } from '../../db/cashAccounts.js'
 import { parseRange } from '../queryRange.js'
+import { publicCashAccount } from '../roles.js'
 
 function agentNameOf(request) {
   return request.user?.name ?? 'Agente'
@@ -22,7 +23,11 @@ function handleError(err, reply) {
 
 export async function list(request, reply) {
   try {
-    return await listCashAccounts()
+    const accounts = await listCashAccounts()
+    if (request.user?.role === 'VENDEDOR') {
+      return accounts.filter((a) => a.active).map(publicCashAccount)
+    }
+    return accounts
   } catch (err) {
     if (handleError(err, reply)) return
     throw err

@@ -1,4 +1,5 @@
 import { round2 } from './balance.js'
+import { chargesTotals } from './charges.js'
 
 function toNum(v) {
   if (v == null) return null
@@ -9,31 +10,40 @@ function toNum(v) {
 }
 
 /**
- * Ganancia bruta de una venta a partir del snapshot de costo en ítems.
+ * Ganancia de una venta a partir del snapshot de costo en ítems y sus gastos internos.
+ * totalUsd ya incluye los cargos cobrados al cliente; los no cobrados son expensesUsd.
  * Si falta unitCostUsd en algún ítem → costUsd/profitUsd/marginPct = null.
  *
- * @param {{ totalUsd: *, items?: Array<{ quantity: number, unitCostUsd?: * }> }} sale
- * @returns {{ costUsd: number|null, profitUsd: number|null, marginPct: number|null }}
+ * @param {{ totalUsd: *, items?: Array<{ quantity: number, unitCostUsd?: * }>, charges?: Array<{ amountUsd: *, billedToCustomer?: boolean }> }} sale
+ * @returns {{ costUsd: number|null, expensesUsd: number, profitUsd: number|null, marginPct: number|null }}
  */
 export function saleProfitOf(sale) {
   const items = sale.items ?? []
-  if (items.length === 0) {
-    return { costUsd: null, profitUsd: null, marginPct: null }
-  }
+  const { expensesUsd } = chargesTotals(sale.charges)
+  const empty = { costUsd: null, expensesUsd, profitUsd: null, marginPct: null }
+  if (items.length === 0) return empty
 
   let costUsd = 0
   for (const it of items) {
     const unitCost = toNum(it.unitCostUsd)
-    if (unitCost == null || !(unitCost >= 0)) {
-      return { costUsd: null, profitUsd: null, marginPct: null }
-    }
+    if (unitCost == null || !(unitCost >= 0)) return empty
     costUsd += it.quantity * unitCost
   }
   costUsd = round2(costUsd)
   const totalUsd = round2(toNum(sale.totalUsd) ?? 0)
-  const profitUsd = round2(totalUsd - costUsd)
+  const profitUsd = round2(totalUsd - costUsd - expensesUsd)
   const marginPct = totalUsd > 0 ? round2((profitUsd / totalUsd) * 100) : null
-  return { costUsd, profitUsd, marginPct }
+  return { costUsd, expensesUsd, profitUsd, marginPct }
+}
+
+/**
+ * Costo total a recuperar: mercancía + gastos internos. Base del profit de cierre en conversiones.
+ * @param {Parameters<typeof saleProfitOf>[0]} sale
+ * @returns {number|null}
+ */
+export function saleTotalCostOf(sale) {
+  const { costUsd, expensesUsd } = saleProfitOf(sale)
+  return costUsd == null ? null : round2(costUsd + expensesUsd)
 }
 
 /**

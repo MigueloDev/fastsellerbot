@@ -33,6 +33,22 @@ export async function listRates(source, { limit = 24 } = {}) {
   return rows.map((r) => ({ id: r.id, source: r.source, ...serializeRate(r) }))
 }
 
+/**
+ * Última(s) tasa(s) con `fetchedAt <= at` — usa el índice `(source, fetched_at DESC)`.
+ * Pensado para `resolveRateAt` (pagos offline con `paidAt` pasado).
+ * @param {'BCV'|'BINANCE'} source
+ * @param {Date} at
+ * @param {number} [take]
+ */
+export async function listRatesUpTo(source, at, take = 1) {
+  const rows = await prisma.exchangeRate.findMany({
+    where: { source, fetchedAt: { lte: at } },
+    orderBy: { fetchedAt: 'desc' },
+    take,
+  })
+  return rows.map((r) => serializeRate(r))
+}
+
 export async function getRateById(id) {
   const row = await prisma.exchangeRate.findUnique({ where: { id } })
   if (!row) return null

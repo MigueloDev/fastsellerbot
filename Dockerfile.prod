@@ -1,0 +1,35 @@
+FROM node:24.18-alpine
+
+RUN apk add --no-cache git
+RUN npm install -g corepack@latest
+RUN corepack enable && corepack prepare pnpm@11.16.0 --activate
+WORKDIR /app
+
+RUN mkdir -p /app/node_modules /home/node/.local/share/pnpm \
+    && chown -R node:node /app /home/node
+
+USER node
+
+COPY --chown=node:node package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+
+ENV npm_config_store_dir=/home/node/.local/share/pnpm/store
+# prisma CLI (devDependency) hace falta para generate + migrate deploy
+RUN pnpm install --frozen-lockfile
+
+COPY --chown=node:node prisma.config.ts ./
+COPY --chown=node:node prisma ./prisma
+COPY --chown=node:node src ./src
+COPY --chown=node:node config ./config
+COPY --chown=node:node docker-entrypoint.sh ./
+
+USER root
+RUN chmod +x docker-entrypoint.sh && chown node:node docker-entrypoint.sh
+USER node
+
+# prisma.config.ts exige DIRECT_URL; generate no habla con la DB
+RUN DIRECT_URL="postgresql://build:build@127.0.0.1:5432/build" pnpm db:generate
+
+ENV NODE_ENV=production
+EXPOSE 3600
+
+CMD ["./docker-entrypoint.sh"]

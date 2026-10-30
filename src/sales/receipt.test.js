@@ -1,7 +1,9 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  assertPdf,
   assertWebp,
+  parseFileBase64,
   parseReceiptBase64,
   ReceiptError,
   RECEIPT_MAX_BYTES,
@@ -14,6 +16,11 @@ function minimalWebp(extraBytes = 0) {
   payload.writeUInt32LE(4 + extraBytes, 4) // file size minus 8
   payload.write('WEBP', 8)
   return payload
+}
+
+/** Minimal valid PDF (just the magic header, enough for assertPdf). */
+function minimalPdf(extraBytes = 0) {
+  return Buffer.concat([Buffer.from('%PDF-1.4\n'), Buffer.alloc(extraBytes, 0)])
 }
 
 describe('receipt', () => {
@@ -63,5 +70,45 @@ describe('receipt', () => {
 
   it('assertWebp throws on short buffer', () => {
     assert.throws(() => assertWebp(Buffer.from('RIFF')), ReceiptError)
+  })
+
+  it('accepts a valid PDF', () => {
+    const buf = minimalPdf()
+    const parsed = parseFileBase64(buf.toString('base64'), 'application/pdf')
+    assert.equal(parsed.contentType, 'application/pdf')
+    assert.equal(parsed.ext, 'pdf')
+    assert.ok(parsed.buffer.equals(buf))
+  })
+
+  it('rejects a PDF with bad magic bytes', () => {
+    const fake = Buffer.from('not-a-pdf-at-all')
+    assert.throws(
+      () => parseFileBase64(fake.toString('base64'), 'application/pdf'),
+      (err) => err instanceof ReceiptError && /PDF/i.test(err.message),
+    )
+  })
+
+  it('rejects a PDF over the 10 MiB cap', () => {
+    const big = minimalPdf(10 * 1024 * 1024)
+    assert.throws(
+      () => parseFileBase64(big.toString('base64'), 'application/pdf'),
+      (err) => err instanceof ReceiptError && /supera/i.test(err.message),
+    )
+  })
+
+  it('rejects data URL mime mismatch with contentType', () => {
+    const buf = minimalPdf()
+    assert.throws(
+      () =>
+        parseFileBase64(
+          `data:image/webp;base64,${buf.toString('base64')}`,
+          'application/pdf',
+        ),
+      (err) => err instanceof ReceiptError && /pdf/i.test(err.message),
+    )
+  })
+
+  it('assertPdf throws on short buffer', () => {
+    assert.throws(() => assertPdf(Buffer.from('nope')), ReceiptError)
   })
 })

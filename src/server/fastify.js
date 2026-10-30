@@ -14,7 +14,6 @@ export function getIO() {
 
 export async function createAppServer(sockBaileys) {
   const isProd = process.env.NODE_ENV === 'production'
-
   // bodyLimit ~8 MB: los comprobantes llegan como JSON base64 (imagen hasta 5 MiB
   // → ~6.7 MB en base64). El default de Fastify (1 MB) rechazaría el upload.
   const app = Fastify({ logger: false, bodyLimit: 8 * 1024 * 1024 })

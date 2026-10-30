@@ -11,7 +11,6 @@ export function registerAuthHook(app) {
 
     const token = extractToken(request)
     const user = await verifyClerkToken(token)
-
     // Clerk es invite-only: un token válido = usuario aprobado.
     if (!user) {
       reply.status(401).send({ error: 'No autorizado' })

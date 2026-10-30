@@ -45,11 +45,27 @@ async function uploadReceipt(path, buffer, contentType) {
  * @param {string} saleId
  * @param {Buffer} buffer
  * @param {string} contentType
+ * @param {string} [ext] `webp` (default, comprobantes viejos) o `pdf`
  * @returns {Promise<string>} storage path
  */
-export async function uploadPaymentReceipt(saleId, buffer, contentType) {
+export async function uploadPaymentReceipt(saleId, buffer, contentType, ext = 'webp') {
   const id = randomBytes(8).toString('hex')
-  const path = `sales/${saleId}/${Date.now()}-${id}.webp`
+  const path = `sales/${saleId}/${Date.now()}-${id}.${ext}`
+  return uploadReceipt(path, buffer, contentType)
+}
+
+/**
+ * Evidencia adjunta a la venta (foto/PDF del despacho) — dir separado del
+ * comprobante de pago, mismo bucket privado.
+ * @param {string} saleId
+ * @param {Buffer} buffer
+ * @param {string} contentType
+ * @param {string} ext `webp` | `pdf`
+ * @returns {Promise<string>} storage path
+ */
+export async function uploadSaleEvidence(saleId, buffer, contentType, ext) {
+  const id = randomBytes(8).toString('hex')
+  const path = `sales/${saleId}/evidence/${Date.now()}-${id}.${ext}`
   return uploadReceipt(path, buffer, contentType)
 }
 

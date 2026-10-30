@@ -3,7 +3,7 @@ import { round2 } from '../sales/balance.js'
 import { applyCashMovementInTx } from '../cash/apply.js'
 import { assertAccountsForConversion } from '../cash/movement.js'
 import {
-  saleProfitOf,
+  saleTotalCostOf,
   currencyPurchaseProfitOf,
   expectedUsdt,
   fxAvailability,
@@ -41,6 +41,7 @@ const SALE_SELECT = {
 const SALE_FOR_PURCHASE = {
   customer: { select: { id: true, name: true, cedula: true } },
   items: true,
+  charges: true,
   payments: { orderBy: { paidAt: 'asc' } },
   currencyPurchaseAllocations: { orderBy: { id: 'asc' } },
 }
@@ -122,11 +123,7 @@ function eligibleFromSale(sale) {
   if (!sale || sale.status === 'ANULADA') return null
   const fx = fxAvailability(sale.payments, sale.currencyPurchaseAllocations)
   if (!(fx.bsAvailable > 0)) return null
-  const items = (sale.items ?? []).map((it) => ({
-    quantity: it.quantity,
-    unitCostUsd: it.unitCostUsd != null ? toNum(it.unitCostUsd) : null,
-  }))
-  const profit = saleProfitOf({ totalUsd: sale.totalUsd, items })
+  const costUsd = saleTotalCostOf(sale)
   return {
     id: sale.id,
     status: sale.status,
@@ -139,7 +136,7 @@ function eligibleFromSale(sale) {
     usdCollected: fx.usdAvailable,
     usdAttributed: fx.usdAttributed,
     usdtConverted: fx.usdtReceived,
-    costUsd: profit.costUsd,
+    costUsd,
     paymentsCount: sale.payments?.length ?? 0,
     purchasesCount: sale.currencyPurchaseAllocations?.length ?? 0,
   }
@@ -157,6 +154,7 @@ export async function stampClosingProfitIfNeeded(db, saleId) {
     where: { id: saleId },
     include: {
       items: true,
+      charges: true,
       payments: true,
       currencyPurchaseAllocations: {
         include: { purchase: { select: { id: true, purchasedAt: true, usdCollected: true } } },
@@ -170,11 +168,7 @@ export async function stampClosingProfitIfNeeded(db, saleId) {
   if (fx.bsAvailable > 0) return null
   if (sale.currencyPurchaseAllocations.some((a) => a.profitUsd != null)) return null
 
-  const items = (sale.items ?? []).map((it) => ({
-    quantity: it.quantity,
-    unitCostUsd: it.unitCostUsd != null ? toNum(it.unitCostUsd) : null,
-  }))
-  const { costUsd } = saleProfitOf({ totalUsd: sale.totalUsd, items })
+  const costUsd = saleTotalCostOf(sale)
   const latest = [...sale.currencyPurchaseAllocations].sort(
     (a, b) =>
       new Date(a.purchase.purchasedAt).getTime() -
@@ -371,11 +365,7 @@ export async function createCurrencyPurchase(input) {
       let costUsd = null
       let profitUsd = null
       if (isClosing) {
-        const items = (r.sale.items ?? []).map((it) => ({
-          quantity: it.quantity,
-          unitCostUsd: it.unitCostUsd != null ? toNum(it.unitCostUsd) : null,
-        }))
-        ;({ costUsd } = saleProfitOf({ totalUsd: r.sale.totalUsd, items }))
+        costUsd = saleTotalCostOf(r.sale)
         ;({ profitUsd } = currencyPurchaseProfitOf({
           usdtReceived: r.fx.usdtReceived + share,
           usdCollected: r.fx.usdAttributed + r.usdCollected,

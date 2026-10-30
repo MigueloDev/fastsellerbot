@@ -9,18 +9,21 @@ export class CustomerError extends Error {
   /**
    * @param {number} status
    * @param {string} message
+   * @param {object} [extra] campos adicionales para el body de la respuesta
    */
-  constructor(status, message) {
+  constructor(status, message, extra = null) {
     super(message)
     this.name = 'CustomerError'
     this.status = status
+    this.extra = extra
   }
 }
 
 /**
- * @param {{ q?: string, includeInactive?: boolean }} opts
+ * @param {{ q?: string, includeInactive?: boolean, limit?: number|null }} opts
+ * `limit: null` quita el tope (bootstrap móvil, que ya filtra por activo).
  */
-export async function listCustomers({ q, includeInactive = false } = {}) {
+export async function listCustomers({ q, includeInactive = false, limit = 100 } = {}) {
   const where = {}
   if (!includeInactive) where.active = true
   if (q?.trim()) {
@@ -38,12 +41,18 @@ export async function listCustomers({ q, includeInactive = false } = {}) {
   return prisma.customer.findMany({
     where,
     orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
-    take: 100,
+    ...(limit != null ? { take: limit } : {}),
   })
+}
+
+/** @param {string} clientId */
+export async function findCustomerByClientId(clientId) {
+  return prisma.customer.findUnique({ where: { clientId } })
 }
 
 /**
  * @param {{
+ *   clientId?: string|null,
  *   cedula: string,
  *   firstName: string,
  *   lastName: string,
@@ -72,6 +81,7 @@ export async function createCustomer(data) {
   try {
     return await prisma.customer.create({
       data: {
+        clientId: data.clientId?.trim() || null,
         cedula,
         firstName,
         lastName,
@@ -84,8 +94,20 @@ export async function createCustomer(data) {
   } catch (err) {
     if (err.code === 'P2002') {
       const target = err.meta?.target
+      // client_id duplicado: deja el error crudo para que findOrCreate haga replay.
+      if (Array.isArray(target) && target.includes('client_id')) throw err
       if (Array.isArray(target) && target.includes('cedula')) {
-        throw new CustomerError(422, 'cedula ya existe')
+        const existing = cedula
+          ? await prisma.customer.findUnique({
+              where: { cedula },
+              select: { id: true, cedula: true, name: true },
+            })
+          : null
+        throw new CustomerError(
+          409,
+          'cedula ya existe',
+          existing ? { existingCustomer: existing } : null,
+        )
       }
       if (Array.isArray(target) && target.includes('jid')) {
         throw new CustomerError(422, 'jid ya existe')

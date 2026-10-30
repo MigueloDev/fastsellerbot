@@ -8,7 +8,11 @@ services:
     environment:
       REDIS_PASSWORD: "${REDIS_PASSWORD:-__pass__}"
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD:-__pass__}\" ping | grep PONG"]
+      test:
+        [
+          "CMD-SHELL",
+          'redis-cli -a "$${REDIS_PASSWORD:-__pass__}" ping | grep PONG',
+        ]
       interval: 5s
       timeout: 3s
       retries: 10

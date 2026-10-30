@@ -1,13 +1,15 @@
 import {
   listCustomers,
   createCustomer,
+  findCustomerByClientId,
   updateCustomer,
   CustomerError,
 } from '../../db/customers.js'
+import { findOrCreate } from '../../db/idempotency.js'
 
 function handleError(err, reply) {
   if (err instanceof CustomerError) {
-    reply.status(err.status).send({ error: err.message })
+    reply.status(err.status).send({ error: err.message, ...err.extra })
     return true
   }
   if (err.code === 'P2002') {
@@ -35,8 +37,13 @@ export async function list(request, reply) {
 
 export async function create(request, reply) {
   try {
-    const customer = await createCustomer(request.body)
-    reply.status(201).send(customer)
+    const clientId = request.body?.clientId || null
+    const { record, replayed } = await findOrCreate(clientId, {
+      find: findCustomerByClientId,
+      create: () => createCustomer(request.body),
+    })
+    if (replayed) reply.header('Idempotent-Replay', 'true')
+    reply.status(replayed ? 200 : 201).send(record)
   } catch (err) {
     if (handleError(err, reply)) return
     throw err

@@ -1,47 +1,82 @@
-import { Worker } from 'bullmq'
-import { redisConnection } from './client.js'
+// Worker BullMQ desactivado (Upstash free). Original:
+// import { Worker } from 'bullmq'
+// import { redisConnection } from './client.js'
+// import { readDelay, typingDelay } from './humanizer.js'
+//
+// function sleep(ms) {
+//   return new Promise(resolve => setTimeout(resolve, ms))
+// }
+//
+// export function createWorker(sock) {
+//   const worker = new Worker(
+//     'outbound-messages',
+//     async (job) => {
+//       const { jid, text, type, key } = job.data
+//
+//       console.log('⚙️  Procesando job:', { jid, type, jobId: job.id, key })
+//
+//       // 1. Simular que leyó el mensaje
+//       await sleep(readDelay())
+//       if (key) {
+//         await sock.readMessages([key])
+//       }
+//       // 2. Mostrar indicador de escritura
+//       await sock.sendPresenceUpdate('composing', jid)
+//       console.log('✍️  Typing...', jid)
+//
+//       // 3. Esperar según largo del texto
+//       await sleep(typingDelay(text))
+//
+//       // 4. Enviar mensaje
+//       await sock.sendMessage(jid, { text })
+//       console.log('✅ Enviado:', { jid, type, chars: text.length })
+//
+//       // 5. Quitar indicador de escritura
+//       await sock.sendPresenceUpdate('paused', jid)
+//     },
+//     {
+//       connection: redisConnection,
+//       concurrency: 1,
+//     }
+//   )
+//
+//   worker.on('completed', (job) => console.log('✅ Job completado:', job.id))
+//   worker.on('failed', (job, err) => console.error('❌ Job fallido:', job?.id, err.message, err.stack))
+//   worker.on('error', (err) => console.error('❌ Worker error:', err.message))
+//
+//   return worker
+// }
+
 import { readDelay, typingDelay } from './humanizer.js'
+import { getCurrentSock } from '../baileys/status.js'
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-export function createWorker(sock) {
-  const worker = new Worker(
-    'outbound-messages',
-    async (job) => {
-      const { jid, text, type, key } = job.data
+/** Envío humanizado con el socket vigente (antes era el processor del Worker BullMQ). */
+export async function deliver({ jid, text, type, key }) {
+  const sock = getCurrentSock()
+  if (!sock) throw new Error('WhatsApp socket no disponible')
 
-      console.log('⚙️  Procesando job:', { jid, type, jobId: job.id, key })
+  console.log('⚙️  Procesando envío:', { jid, type, key })
 
-      // 1. Simular que leyó el mensaje
-      await sleep(readDelay())
-      if (key) {
-        await sock.readMessages([key])
-      }
-      // 2. Mostrar indicador de escritura
-      await sock.sendPresenceUpdate('composing', jid)
-      console.log('✍️  Typing...', jid)
+  // 1. Simular que leyó el mensaje
+  await sleep(readDelay())
+  if (key) {
+    await sock.readMessages([key])
+  }
+  // 2. Mostrar indicador de escritura
+  await sock.sendPresenceUpdate('composing', jid)
+  console.log('✍️  Typing...', jid)
 
-      // 3. Esperar según largo del texto
-      await sleep(typingDelay(text))
+  // 3. Esperar según largo del texto
+  await sleep(typingDelay(text))
 
-      // 4. Enviar mensaje
-      await sock.sendMessage(jid, { text })
-      console.log('✅ Enviado:', { jid, type, chars: text.length })
+  // 4. Enviar mensaje
+  await sock.sendMessage(jid, { text })
+  console.log('✅ Enviado:', { jid, type, chars: text.length })
 
-      // 5. Quitar indicador de escritura
-      await sock.sendPresenceUpdate('paused', jid)
-    },
-    {
-      connection: redisConnection,
-      concurrency: 1,
-    }
-  )
-
-  worker.on('completed', (job) => console.log('✅ Job completado:', job.id))
-  worker.on('failed', (job, err) => console.error('❌ Job fallido:', job?.id, err.message, err.stack))
-  worker.on('error', (err) => console.error('❌ Worker error:', err.message))
-
-  return worker
+  // 5. Quitar indicador de escritura
+  await sock.sendPresenceUpdate('paused', jid)
 }

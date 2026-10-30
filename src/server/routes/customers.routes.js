@@ -10,6 +10,7 @@ export default async function customersRoutes(app) {
         required: ['cedula', 'firstName', 'lastName'],
         additionalProperties: false,
         properties: {
+          clientId: { type: ['string', 'null'], minLength: 1 },
           cedula: { type: 'string', minLength: 1 },
           firstName: { type: 'string', minLength: 1 },
           lastName: { type: 'string', minLength: 1 },
