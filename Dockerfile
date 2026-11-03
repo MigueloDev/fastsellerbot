@@ -1,4 +1,4 @@
-FROM node:24-alpine
+FROM node:24.2.0-alpine
 
 RUN apk add --no-cache git
 RUN npm install -g corepack@latest

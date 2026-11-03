@@ -244,6 +244,28 @@ model Customer {
   @@map("customers")
 }
 
+enum LeadSource {
+  TIKTOK
+  INSTAGRAM
+  FACEBOOK
+  WHATSAPP
+  OTRO
+}
+
+// Prospecto capturado a mano (redes sin integración). createdAt = fecha de registro.
+model Lead {
+  id             String     @id @default(cuid())
+  name           String
+  phone          String? // mismo formato que Customer.phone
+  source         LeadSource
+  lastRemindedAt DateTime?  @map("last_reminded_at")
+  createdAt      DateTime   @default(now()) @map("created_at")
+  updatedAt      DateTime   @updatedAt @map("updated_at")
+
+  @@index([createdAt])
+  @@map("leads")
+}
+
 model Sale {
   id               String            @id @default(cuid())
   clientId         String?           @unique @map("client_id") // UUID del cliente móvil, idempotencia offline

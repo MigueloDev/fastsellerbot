@@ -14,6 +14,11 @@ describe('balance', () => {
     assert.equal(round2(13.694), 13.69)
   })
 
+  it('BCV conversion uses rate rounded to 2 dp first', () => {
+    // 1040 × 804.8109 (4 dp stored) must match 1040 × 804.81
+    assert.equal(round2(1040 * round2(804.8109)), 837002.4)
+  })
+
   it('balanceUsdOf = total − Σ payments', () => {
     const sale = {
       totalUsd: 20,

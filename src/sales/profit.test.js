@@ -2,6 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   saleProfitOf,
+  saleTotalCostOf,
   currencyPurchaseProfitOf,
   expectedUsdt,
   paymentCurrencyTotals,
@@ -9,7 +10,27 @@ import {
   allocateUsdt,
 } from './profit.js'
 
+describe('saleTotalCostOf', () => {
+  it('suma mercancía y gastos internos; null si falta costo', () => {
+    const charges = [{ amountUsd: 2 }, { amountUsd: 3, billedToCustomer: true }]
+    assert.equal(saleTotalCostOf({ totalUsd: 10, items: [{ quantity: 2, unitCostUsd: 3 }], charges }), 8)
+    assert.equal(saleTotalCostOf({ totalUsd: 10, items: [{ quantity: 1, unitCostUsd: null }], charges }), null)
+  })
+})
+
 describe('saleProfitOf', () => {
+  it('gastos internos restan ganancia; cobrados ya vienen en totalUsd', () => {
+    const r = saleProfitOf({
+      totalUsd: 103, // 100 de ítems + 3 delivery cobrado
+      items: [{ quantity: 1, unitCostUsd: 50 }],
+      charges: [
+        { amountUsd: 3, billedToCustomer: true },
+        { amountUsd: 2, billedToCustomer: false },
+      ],
+    })
+    assert.deepEqual(r, { costUsd: 50, expensesUsd: 2, profitUsd: 51, marginPct: 49.51 })
+  })
+
   it('calcula costo, ganancia y margen', () => {
     const r = saleProfitOf({
       totalUsd: 100,
@@ -18,7 +39,7 @@ describe('saleProfitOf', () => {
         { quantity: 1, unitCostUsd: 10 },
       ],
     })
-    assert.deepEqual(r, { costUsd: 50, profitUsd: 50, marginPct: 50 })
+    assert.deepEqual(r, { costUsd: 50, expensesUsd: 0, profitUsd: 50, marginPct: 50 })
   })
 
   it('retorna null si falta unitCostUsd en algún ítem', () => {
@@ -29,12 +50,13 @@ describe('saleProfitOf', () => {
         { quantity: 1, unitCostUsd: null },
       ],
     })
-    assert.deepEqual(r, { costUsd: null, profitUsd: null, marginPct: null })
+    assert.deepEqual(r, { costUsd: null, expensesUsd: 0, profitUsd: null, marginPct: null })
   })
 
   it('retorna null sin ítems', () => {
     assert.deepEqual(saleProfitOf({ totalUsd: 0, items: [] }), {
       costUsd: null,
+      expensesUsd: 0,
       profitUsd: null,
       marginPct: null,
     })

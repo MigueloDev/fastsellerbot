@@ -48,10 +48,15 @@ services:
     tty: true
     networks:
       - victorialeads-erp-network
+      # Supabase local (`supabase start`): db en supabase_db_backend:5432, API/Storage en supabase_kong_backend:8000
+      - supabase
 
 networks:
   victorialeads-erp-network:
     driver: bridge
+  supabase:
+    external: true
+    name: supabase_network_backend # project_id "backend" de supabase/config.toml
 
 volumes:
   redis_data:
