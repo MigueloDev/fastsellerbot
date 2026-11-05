@@ -18,6 +18,8 @@ Este archivo es un puntero local. Si cambia el stack o la estructura de `src/`, 
 
 Prod (VPS, no uses esto en local): desde `backend/deploy/`, `cp .env.example .env` y `docker compose up -d --build`. Compose lee **solo** `deploy/.env` (no `backend/.env`). Redis interno + Caddy `:80/:443`. Dashboard: Vercel (root `fastseller_dashboard/`). PG: Supabase.
 
+Prod alterno: **Render plan free** (Docker, `Dockerfile.prod`). Se duerme tras ~15 min sin tráfico; `keepalive/` (Cloudflare Worker, cron cada 10 min a `/health`) lo mantiene despierto. Ver `docs/PROJECT_OVERVIEW.md` § Deploy / keepalive.
+
 ## Stack
 
 | Capa | Tecnología |

@@ -1,4 +1,5 @@
 import { prisma } from './client.js'
+import { csvIn } from './sales.js'
 import { balanceUsdOf, round2 } from '../sales/balance.js'
 import { paymentStateOf } from '../sales/paymentState.js'
 import { fxAvailability, expectedUsdt } from '../sales/profit.js'
@@ -46,7 +47,9 @@ function dateWhere({ from, to }, field = 'createdAt') {
  * `/metrics/summary`: **vendido** = ventas no anuladas creadas en el rango,
  * **cobrado** = pagos con `paidAt` en el rango (pueden ser de ventas anteriores).
  *
- * `paymentState` (PAGADA|ABONADA|CREDITO) filtra en memoria tras mapear filas.
+ * `paymentState` (PAGADA|ABONADA|CREDITO) filtra en memoria tras mapear filas,
+ * porque es derivado y no vive en el schema. `status`, `delivery` y
+ * `paymentState` aceptan CSV ("PAGADA,ABONADA") para selección múltiple.
  *
  * @param {{ from?: Date, to?: Date, status?: string, delivery?: string, deliveryType?: string, customerId?: string, paymentState?: string }} filters
  */
@@ -61,8 +64,10 @@ export async function getSalesReport({
 } = {}) {
   /** @type {any} */
   const where = { ...dateWhere({ from, to }) }
-  if (status) where.status = status
-  if (delivery) where.deliveryStatus = delivery
+  const statusIn = csvIn(status, ['PENDIENTE', 'PAGADA', 'ANULADA'])
+  if (statusIn) where.status = statusIn
+  const deliveryIn = csvIn(delivery, ['POR_ENTREGAR', 'ENTREGADA'])
+  if (deliveryIn) where.deliveryStatus = deliveryIn
   if (deliveryType) where.deliveryType = deliveryType
   if (customerId) where.customerId = customerId
 
@@ -131,7 +136,13 @@ export async function getSalesReport({
   })
 
   if (paymentState) {
-    sales = sales.filter((s) => s.paymentState === paymentState)
+    const states = paymentState
+      .split(',')
+      .map((v) => v.trim())
+      .filter((v) => ['PAGADA', 'ABONADA', 'CREDITO'].includes(v))
+    if (states.length > 0) {
+      sales = sales.filter((s) => states.includes(s.paymentState))
+    }
   }
 
   const live = sales.filter((s) => s.status !== 'ANULADA')

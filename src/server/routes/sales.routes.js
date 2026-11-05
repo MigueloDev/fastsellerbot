@@ -49,9 +49,11 @@ export default async function salesRoutes(app) {
       querystring: {
         type: 'object',
         properties: {
-          status: { type: 'string', enum: ['PENDIENTE', 'PAGADA', 'ANULADA'] },
-          delivery: { type: 'string', enum: ['POR_ENTREGAR', 'ENTREGADA'] },
-          deliveryType: { type: 'string', enum: ['RETIRO', 'DELIVERY', 'FORANEA'] },
+          // CSV para selección múltiple (ej. "PAGADA,ABONADA"); listSales
+          // valida cada valor contra el enum y descarta los inválidos (csvIn).
+          status: { type: 'string' },
+          delivery: { type: 'string' },
+          deliveryType: { type: 'string' },
           customerId: { type: 'string' },
           from: { type: 'string' },
           to: { type: 'string' },

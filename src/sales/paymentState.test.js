@@ -1,26 +1,49 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { paymentStateOf } from './paymentState.js'
+import { paymentStateOf, paymentStatesWhere } from './paymentState.js'
 
 describe('paymentStateOf', () => {
-  it('PAGADA cuando status es PAGADA', () => {
-    assert.equal(paymentStateOf({ status: 'PAGADA', paymentsCount: 2 }), 'PAGADA')
-    assert.equal(paymentStateOf({ status: 'PAGADA', paymentsCount: 0 }), 'PAGADA')
+  it('PAGADA sin importar pagos', () => {
+    assert.equal(paymentStateOf({ status: 'PAGADA' }), 'PAGADA')
   })
 
-  it('ABONADA cuando PENDIENTE con pagos', () => {
-    assert.equal(paymentStateOf({ status: 'PENDIENTE', paymentsCount: 1 }), 'ABONADA')
-    assert.equal(paymentStateOf({ status: 'PENDIENTE', paymentsCount: 3 }), 'ABONADA')
+  it('PENDIENTE con pagos es ABONADA', () => {
+    assert.equal(paymentStateOf({ status: 'PENDIENTE', paymentsCount: 2 }), 'ABONADA')
   })
 
-  it('CREDITO cuando PENDIENTE sin pagos', () => {
+  it('PENDIENTE sin pagos es CREDITO', () => {
     assert.equal(paymentStateOf({ status: 'PENDIENTE', paymentsCount: 0 }), 'CREDITO')
-    assert.equal(paymentStateOf({ status: 'PENDIENTE' }), 'CREDITO')
   })
 
-  it('null cuando ANULADA u otro status', () => {
-    assert.equal(paymentStateOf({ status: 'ANULADA', paymentsCount: 0 }), null)
-    assert.equal(paymentStateOf({ status: 'ANULADA', paymentsCount: 1 }), null)
-    assert.equal(paymentStateOf({ status: 'OTRO', paymentsCount: 0 }), null)
+  it('ANULADA no tiene estado de cobro', () => {
+    assert.equal(paymentStateOf({ status: 'ANULADA' }), null)
+  })
+})
+
+describe('paymentStatesWhere', () => {
+  it('sin filtro devuelve undefined', () => {
+    assert.equal(paymentStatesWhere(undefined), undefined)
+    assert.equal(paymentStatesWhere(''), undefined)
+  })
+
+  it('valores inválidos se ignoran; si todos lo son, undefined', () => {
+    assert.equal(paymentStatesWhere('FOO,BAR'), undefined)
+  })
+
+  it('CSV mixto traduce cada estado a su condición', () => {
+    assert.deepEqual(paymentStatesWhere('PAGADA,ABONADA,CREDITO,ANULADA'), [
+      { status: 'PAGADA' },
+      { status: 'PENDIENTE', payments: { some: {} } },
+      { status: 'PENDIENTE', payments: { none: {} } },
+      { status: 'ANULADA' },
+    ])
+  })
+
+  it('PENDIENTE solo (retrocompatible con el link del home)', () => {
+    assert.deepEqual(paymentStatesWhere('PENDIENTE'), [{ status: 'PENDIENTE' }])
+  })
+
+  it('ignora valores inválidos mezclados con válidos', () => {
+    assert.deepEqual(paymentStatesWhere('PAGADA,FOO'), [{ status: 'PAGADA' }])
   })
 })

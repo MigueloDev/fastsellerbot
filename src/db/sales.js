@@ -13,6 +13,7 @@ import { pickTierPrice, qtyByProduct } from '../sales/pricing.js'
 import { saleProfitOf } from '../sales/profit.js'
 import { chargesTotals, normalizeCharge, normalizeDelivery } from '../sales/charges.js'
 import { readRate } from '../rates/store.js'
+import { paymentStatesWhere } from '../sales/paymentState.js'
 import { getRateById, listRatesUpTo } from './rates.js'
 import { stampClosingProfitIfNeeded } from './currencyPurchases.js'
 import { applyCashMovementInTx } from '../cash/apply.js'
@@ -824,6 +825,18 @@ export async function findSale(id) {
 }
 
 /**
+ * CSV ("A,B") → `{ in: [...] }` filtrado contra los valores permitidos del enum.
+ * @param {string | undefined} csv
+ * @param {readonly string[]} allowed
+ * @returns {{ in: string[] } | undefined}
+ */
+export function csvIn(csv, allowed) {
+  if (!csv) return undefined
+  const values = csv.split(',').map((v) => v.trim()).filter((v) => allowed.includes(v))
+  return values.length > 0 ? { in: values } : undefined
+}
+
+/**
  * @param {{ status?: string, delivery?: string, deliveryType?: string, customerId?: string, sellerId?: string, from?: string, to?: string, limit?: number, offset?: number }} filters
  */
 export async function listSales({
@@ -840,9 +853,12 @@ export async function listSales({
   const take = Math.min(Math.max(Number(limit) || 50, 1), 100)
   const skip = Math.max(Number(offset) || 0, 0)
   const where = {}
-  if (status) where.status = status
-  if (delivery) where.deliveryStatus = delivery
-  if (deliveryType) where.deliveryType = deliveryType
+  const statusOr = paymentStatesWhere(status)
+  if (statusOr) where.OR = statusOr
+  const deliveryIn = csvIn(delivery, ['POR_ENTREGAR', 'ENTREGADA'])
+  if (deliveryIn) where.deliveryStatus = deliveryIn
+  const deliveryTypeIn = csvIn(deliveryType, ['RETIRO', 'DELIVERY', 'FORANEA'])
+  if (deliveryTypeIn) where.deliveryType = deliveryTypeIn
   if (customerId) where.customerId = customerId
   if (sellerId) where.sellerId = sellerId
   if (from || to) {
