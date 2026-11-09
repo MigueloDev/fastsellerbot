@@ -3,6 +3,12 @@ import { listReceivables } from './sales.js'
 import { listStockLevels } from './stock.js'
 import { balanceView } from '../sales/balance.js'
 import { summarizeReceivables } from '../sales/receivablesSummary.js'
+import {
+  previousWindow,
+  summarizeProfit,
+  sumTotalUsd,
+  topProductLines,
+} from '../sales/metricsRollup.js'
 
 function toNum(v) {
   if (v == null) return 0
@@ -89,26 +95,39 @@ async function byPriceRefAgg(range) {
 }
 
 /**
+ * Ventas del rango con lo justo para ganancia y top.
+ * ponytail: una lectura alimenta ambos; si "Todo" crece mucho, pasar a agregados SQL.
  * @param {{ from?: Date, to?: Date }} range
  */
-async function topProductsAgg(range) {
-  const where = {
-    sale: saleDateWhere(range),
-  }
-  const grouped = await prisma.saleItem.groupBy({
-    by: ['productId', 'variantId'],
-    where,
-    _sum: { quantity: true, subtotalUsd: true },
-    orderBy: { _sum: { quantity: 'desc' } },
-    take: 5,
+function loadSales(range) {
+  return prisma.sale.findMany({
+    where: saleDateWhere(range),
+    select: {
+      totalUsd: true,
+      items: {
+        select: {
+          productId: true,
+          variantId: true,
+          quantity: true,
+          unitCostUsd: true,
+          subtotalUsd: true,
+        },
+      },
+      charges: {
+        select: { amountUsd: true, billedToCustomer: true },
+      },
+    },
   })
+}
 
-  if (grouped.length === 0) return []
+/**
+ * @param {ReturnType<typeof topProductLines>} lines
+ */
+async function withProductNames(lines) {
+  if (lines.length === 0) return []
 
-  const productIds = [...new Set(grouped.map((g) => g.productId))]
-  const variantIds = [
-    ...new Set(grouped.map((g) => g.variantId).filter(Boolean)),
-  ]
+  const productIds = [...new Set(lines.map((g) => g.productId))]
+  const variantIds = [...new Set(lines.map((g) => g.variantId).filter(Boolean))]
 
   const [products, variants] = await Promise.all([
     prisma.product.findMany({
@@ -126,13 +145,14 @@ async function topProductsAgg(range) {
   const productName = new Map(products.map((p) => [p.id, p.name]))
   const variantName = new Map(variants.map((v) => [v.id, v.name]))
 
-  return grouped.map((g) => ({
+  return lines.map((g) => ({
     productId: g.productId,
     productName: productName.get(g.productId) ?? '—',
     variantId: g.variantId,
     variantName: g.variantId ? (variantName.get(g.variantId) ?? null) : null,
-    unitsSold: g._sum.quantity ?? 0,
-    revenueUsd: toNum(g._sum.subtotalUsd),
+    unitsSold: g.unitsSold,
+    revenueUsd: g.revenueUsd,
+    profitUsd: g.profitUsd,
   }))
 }
 
@@ -235,29 +255,37 @@ async function lowStockList() {
 }
 
 /**
- * Resumen home dashboard. Periodo aplica a sold/collected/byPriceRef/topProducts/salesByDay.
+ * Resumen home dashboard. Periodo aplica a sold/collected/byPriceRef/topProducts/salesByDay/profit.
+ * `previous` es la ventana del mismo largo justo antes (null en Todo).
  * receivables y lowStock son snapshots globales.
+ * Ganancia de producto = precio − costo de la línea. La del período resta además los gastos internos.
  *
  * @param {{ from?: Date, to?: Date }} range
  */
 export async function getMetricsSummary(range = {}) {
+  const prev = previousWindow(range)
   const [
     sold,
     collected,
     byPriceRef,
-    topProducts,
     salesByDay,
     receivables,
     lowStock,
+    sales,
+    prevSales,
   ] = await Promise.all([
     soldAgg(range),
     collectedAgg(range),
     byPriceRefAgg(range),
-    topProductsAgg(range),
     salesByDayAgg(range),
     receivablesSnapshot(),
     lowStockList(),
+    loadSales(range),
+    prev ? loadSales(prev) : Promise.resolve(null),
   ])
+
+  const profit = summarizeProfit(sales)
+  const topProducts = await withProductNames(topProductLines(sales))
 
   return {
     period: {
@@ -268,6 +296,13 @@ export async function getMetricsSummary(range = {}) {
     collected,
     receivables,
     byPriceRef,
+    profit,
+    previous: prevSales
+      ? {
+          soldUsd: sumTotalUsd(prevSales),
+          profitUsd: summarizeProfit(prevSales).totalUsd,
+        }
+      : null,
     topProducts,
     salesByDay,
     lowStock,
