@@ -39,6 +39,21 @@ export function isRateTooRecent(fetchedAt, intervalMs, now = Date.now()) {
   return now - t < intervalMs
 }
 
+/**
+ * BCV publica una tasa por día de vigencia. True si ya hay fila guardada ese día
+ * (hora Caracas) o después → no volver a guardar (protege la carga manual del día).
+ * ponytail: una corrección upstream con el mismo día se ignora hasta el día siguiente; usar "Refrescar".
+ * @param {string} upstreamDay YYYY-MM-DD
+ * @param {Date|string|null|undefined} previousFetchedAt
+ */
+export function bcvDayAlreadyStored(upstreamDay, previousFetchedAt) {
+  if (previousFetchedAt == null) return false
+  const prev = new Date(previousFetchedAt)
+  if (!Number.isFinite(prev.getTime())) return false
+  const prevDay = prev.toLocaleDateString('en-CA', { timeZone: 'America/Caracas' })
+  return String(upstreamDay).slice(0, 10) <= prevDay
+}
+
 // ponytail: self-check — fails if sanity / freshness logic breaks
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const assert = (cond, msg) => {
@@ -57,5 +72,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   assert(isRateTooRecent(null, tenMin, now) === false, 'null not too recent')
   assert(isRateTooRecent(new Date(now - 60_000), tenMin, now) === true, '1m ago too recent')
   assert(isRateTooRecent(new Date(now - 11 * 60_000), tenMin, now) === false, '11m ago ok')
+
+  // 2026-11-11 10:00 Caracas = 14:00Z
+  const manual = '2026-11-11T14:00:00.000Z'
+  assert(bcvDayAlreadyStored('2026-11-11', manual) === true, 'same day blocked')
+  assert(bcvDayAlreadyStored('2026-11-10', manual) === true, 'stale upstream blocked')
+  assert(bcvDayAlreadyStored('2026-11-12', manual) === false, 'next day allowed')
+  assert(bcvDayAlreadyStored('2026-11-12', '2026-11-12T02:00:00.000Z') === false, '22:00 Caracas still day 11')
+  assert(bcvDayAlreadyStored('2026-11-11', null) === false, 'no previous allowed')
   console.log('validate.js ok')
 }

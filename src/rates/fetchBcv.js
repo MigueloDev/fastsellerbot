@@ -1,6 +1,6 @@
 /**
  * Port of dashboard /api/bcv — no credential logging.
- * @returns {Promise<{ rate: number, fetchedAt: Date }>}
+ * @returns {Promise<{ rate: number, fetchedAt: Date, day: string|null }>}
  */
 export async function fetchBcv() {
   const baseUrl = process.env.BCV_API_URL
@@ -29,5 +29,7 @@ export async function fetchBcv() {
   return {
     rate,
     fetchedAt: Number.isNaN(fetchedAt.getTime()) ? new Date() : fetchedAt,
+    // Día de vigencia (YYYY-MM-DD) — protege la tasa manual del día (bcvDayAlreadyStored).
+    day: current?.valueDate || current?.date || null,
   }
 }
