@@ -1,5 +1,6 @@
 import {
   getSalesReport,
+  getPaymentsReport,
   getKardex,
   getProductMovements,
   getFxReport,
@@ -27,7 +28,8 @@ export async function sales(request, reply) {
       reply.status(400).send({ error: range.error })
       return
     }
-    const { status, delivery, deliveryType, customerId, paymentState } = request.query ?? {}
+    const { status, delivery, deliveryType, customerId, paymentState, method, accountId } =
+      request.query ?? {}
     return await getSalesReport({
       ...range,
       status,
@@ -35,7 +37,23 @@ export async function sales(request, reply) {
       deliveryType,
       customerId,
       paymentState,
+      method,
+      accountId,
     })
+  } catch (err) {
+    if (handleError(err, reply)) return
+    throw err
+  }
+}
+
+export async function payments(request, reply) {
+  try {
+    const range = parseRange(request.query)
+    if ('error' in range) {
+      reply.status(400).send({ error: range.error })
+      return
+    }
+    return await getPaymentsReport({ ...range, method: request.query?.method })
   } catch (err) {
     if (handleError(err, reply)) return
     throw err
