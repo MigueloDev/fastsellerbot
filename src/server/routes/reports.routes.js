@@ -16,10 +16,28 @@ export default async function reportsRoutes(app) {
           deliveryType: { type: 'string', enum: ['RETIRO', 'DELIVERY', 'FORANEA'] },
           customerId: { type: 'string' },
           paymentState: { type: 'string' },
+          // CSV de PaymentMethod / ids de CashAccount (pagos de la venta).
+          method: { type: 'string' },
+          accountId: { type: 'string' },
         },
       },
     },
   }, reports.sales)
+
+  app.get('/reports/payments', {
+    schema: {
+      querystring: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          from: { type: 'string' },
+          to: { type: 'string' },
+          // CSV de PaymentMethod; los inválidos se descartan (csvIn).
+          method: { type: 'string' },
+        },
+      },
+    },
+  }, reports.payments)
 
   app.get('/reports/kardex', {
     schema: {

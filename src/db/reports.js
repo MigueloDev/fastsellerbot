@@ -4,6 +4,7 @@ import { balanceUsdOf, round2 } from '../sales/balance.js'
 import { paymentStateOf } from '../sales/paymentState.js'
 import { fxAvailability, expectedUsdt } from '../sales/profit.js'
 import { chargesTotals } from '../sales/charges.js'
+import { PAYMENT_METHOD_KEYS, summarizeByMethod } from '../sales/paymentMethods.js'
 import { readRate } from '../rates/store.js'
 
 export class ReportError extends Error {
@@ -51,7 +52,10 @@ function dateWhere({ from, to }, field = 'createdAt') {
  * porque es derivado y no vive en el schema. `status`, `delivery` y
  * `paymentState` aceptan CSV ("PAGADA,ABONADA") para selección múltiple.
  *
- * @param {{ from?: Date, to?: Date, status?: string, delivery?: string, deliveryType?: string, customerId?: string, paymentState?: string }} filters
+ * `method` / `accountId` (CSV) dejan solo ventas con al menos un pago que
+ * cumpla ambos, y acotan el **cobrado** del período a esos mismos pagos.
+ *
+ * @param {{ from?: Date, to?: Date, status?: string, delivery?: string, deliveryType?: string, customerId?: string, paymentState?: string, method?: string, accountId?: string }} filters
  */
 export async function getSalesReport({
   from,
@@ -61,9 +65,18 @@ export async function getSalesReport({
   deliveryType,
   customerId,
   paymentState,
+  method,
+  accountId,
 } = {}) {
   /** @type {any} */
   const where = { ...dateWhere({ from, to }) }
+  /** @type {any} */
+  const paymentWhere = {}
+  const methodIn = csvIn(method, PAYMENT_METHOD_KEYS)
+  if (methodIn) paymentWhere.method = methodIn
+  const accountIds = accountId?.split(',').map((v) => v.trim()).filter(Boolean) ?? []
+  if (accountIds.length > 0) paymentWhere.accountId = { in: accountIds }
+  if (Object.keys(paymentWhere).length > 0) where.payments = { some: paymentWhere }
   const statusIn = csvIn(status, ['PENDIENTE', 'PAGADA', 'ANULADA'])
   if (statusIn) where.status = statusIn
   const deliveryIn = csvIn(delivery, ['POR_ENTREGAR', 'ENTREGADA'])
@@ -91,6 +104,7 @@ export async function getSalesReport({
       where: {
         sale: { status: { not: 'ANULADA' } },
         ...dateWhere({ from, to }, 'paidAt'),
+        ...paymentWhere,
       },
       _count: { _all: true },
       _sum: { amountUsd: true },
@@ -167,6 +181,8 @@ export async function getSalesReport({
       deliveryType: deliveryType ?? null,
       customerId: customerId ?? null,
       paymentState: paymentState ?? null,
+      method: method ?? null,
+      accountId: accountId ?? null,
     },
     totals: {
       count: live.length,
@@ -264,6 +280,60 @@ function summarizeByProduct(sales) {
     }
   }
   return [...map.values()].sort((a, b) => b.revenueUsd - a.revenueUsd)
+}
+
+// ─────────────────────────────── Reporte de pagos ───────────────────────────────
+
+/**
+ * Pagos con `paidAt` en el rango (misma convención "cobrado" que el reporte de
+ * ventas: excluye ventas anuladas), agrupados por método. `method` acepta CSV
+ * ("ZELLE,PAGO_MOVIL") para selección múltiple.
+ *
+ * @param {{ from?: Date, to?: Date, method?: string }} filters
+ */
+export async function getPaymentsReport({ from, to, method } = {}) {
+  /** @type {any} */
+  const where = {
+    sale: { status: { not: 'ANULADA' } },
+    ...dateWhere({ from, to }, 'paidAt'),
+  }
+  const methodIn = csvIn(method, PAYMENT_METHOD_KEYS)
+  if (methodIn) where.method = methodIn
+
+  const rows = await prisma.payment.findMany({
+    where,
+    include: {
+      sale: { select: { id: true, customer: { select: { name: true, cedula: true } } } },
+      account: { select: { alias: true } },
+    },
+    orderBy: { paidAt: 'desc' },
+  })
+
+  const payments = rows.map((p) => ({
+    id: p.id,
+    paidAt: p.paidAt,
+    saleId: p.saleId,
+    customerName: p.sale?.customer?.name ?? '—',
+    customerCedula: p.sale?.customer?.cedula ?? null,
+    method: p.method,
+    currency: p.currency,
+    amount: toNum(p.amount),
+    amountUsd: toNum(p.amountUsd),
+    rateUsed: p.rateUsed != null ? toNum(p.rateUsed) : null,
+    accountAlias: p.account?.alias ?? null,
+    agentName: p.agentName,
+  }))
+
+  return {
+    period: { from: from?.toISOString() ?? null, to: to?.toISOString() ?? null },
+    filters: { method: method ?? null },
+    totals: {
+      count: payments.length,
+      amountUsd: round2(payments.reduce((sum, p) => sum + p.amountUsd, 0)),
+    },
+    byMethod: summarizeByMethod(payments),
+    payments,
+  }
 }
 
 // ────────────────────────────────── Kardex ──────────────────────────────────
