@@ -54,6 +54,8 @@ function dateWhere({ from, to }, field = 'createdAt') {
  *
  * `method` / `accountId` (CSV) dejan solo ventas con al menos un pago que
  * cumpla ambos, y acotan el **cobrado** del período a esos mismos pagos.
+ * Con esos filtros, cada venta y los totales traen `collectedFilteredUsd`
+ * (solo pagos que cumplen el filtro); sin filtro es `null`.
  *
  * @param {{ from?: Date, to?: Date, status?: string, delivery?: string, deliveryType?: string, customerId?: string, paymentState?: string, method?: string, accountId?: string }} filters
  */
@@ -76,7 +78,11 @@ export async function getSalesReport({
   if (methodIn) paymentWhere.method = methodIn
   const accountIds = accountId?.split(',').map((v) => v.trim()).filter(Boolean) ?? []
   if (accountIds.length > 0) paymentWhere.accountId = { in: accountIds }
-  if (Object.keys(paymentWhere).length > 0) where.payments = { some: paymentWhere }
+  const hasPaymentFilter = Object.keys(paymentWhere).length > 0
+  if (hasPaymentFilter) where.payments = { some: paymentWhere }
+  const matchesPayment = (p) =>
+    (!methodIn || methodIn.in.includes(p.method)) &&
+    (accountIds.length === 0 || accountIds.includes(p.accountId))
   const statusIn = csvIn(status, ['PENDIENTE', 'PAGADA', 'ANULADA'])
   if (statusIn) where.status = statusIn
   const deliveryIn = csvIn(delivery, ['POR_ENTREGAR', 'ENTREGADA'])
@@ -141,6 +147,13 @@ export async function getSalesReport({
       })),
       totalUsd,
       collectedUsd,
+      collectedFilteredUsd: hasPaymentFilter
+        ? round2(
+            sale.payments
+              .filter(matchesPayment)
+              .reduce((sum, p) => sum + toNum(p.amountUsd), 0),
+          )
+        : null,
       balanceUsd: balanceUsdOf({ totalUsd, payments: sale.payments }),
       paymentsCount,
       paymentState: paymentStateOf({ status: sale.status, paymentsCount }),
@@ -191,6 +204,9 @@ export async function getSalesReport({
       totalUsd,
       collectedUsd,
       collectedCount: collectedAgg._count._all,
+      collectedFilteredUsd: hasPaymentFilter
+        ? round2(live.reduce((sum, s) => sum + s.collectedFilteredUsd, 0))
+        : null,
       balanceUsd,
       expensesUsd,
       totalBs: rate2 != null ? round2(totalUsd * rate2) : null,
