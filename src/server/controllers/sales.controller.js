@@ -34,6 +34,8 @@ import {
   uploadSaleEvidence,
 } from '../../storage/receipts.js'
 import { ownsSale, redactSaleForSeller } from '../roles.js'
+import { renderLayawayContract } from '../../contracts/layawayContract.js'
+import { signContractToken, verifyContractToken } from '../../contracts/linkToken.js'
 
 function isSeller(request) {
   return request.user?.role === 'VENDEDOR'
@@ -149,6 +151,7 @@ export async function create(request, reply) {
           note: body.note,
           delivery: body.delivery,
           charges: body.charges,
+          layaway: body.layaway,
           agentName: agentNameOf(request),
           sellerId: request.user?.staffId ?? null,
         }),
@@ -179,6 +182,7 @@ export async function update(request, reply) {
       note: body.note,
       delivery: body.delivery,
       charges: body.charges,
+      layaway: body.layaway,
       agentName: agentNameOf(request),
     })
     return await saleResponse(sale)
@@ -431,4 +435,51 @@ export async function receivables(request, reply) {
     if (handleError(err, reply)) return
     throw err
   }
+}
+
+// --- Contrato de apartado (PDF armado al vuelo con los pagos actuales) ---
+
+async function sendContract(reply, sale, disposition) {
+  const pdf = await renderLayawayContract(sale)
+  const filename = `contrato-apartado-${String(sale.layaway.number).padStart(5, '0')}.pdf`
+  reply
+    .type('application/pdf')
+    .header('Content-Disposition', `${disposition}; filename="${filename}"`)
+    .header('Cache-Control', 'no-store')
+    .send(pdf)
+}
+
+async function findLayawaySale(request, reply) {
+  if (!(await sellerOwns(request, reply, request.params.id))) return null
+  const sale = await findSale(request.params.id)
+  if (!sale?.layaway || sale.status === 'ANULADA') {
+    reply.status(404).send({ error: 'La venta no tiene contrato de apartado' })
+    return null
+  }
+  return sale
+}
+
+export async function contractPdf(request, reply) {
+  const sale = await findLayawaySale(request, reply)
+  if (sale) await sendContract(reply, sale, 'attachment')
+}
+
+/** Enlace público nuevo en cada llamada (token firmado con expiración). */
+export async function contractLink(request, reply) {
+  const sale = await findLayawaySale(request, reply)
+  if (!sale) return
+  const { token, expiresAt } = signContractToken(sale.id)
+  const base = (process.env.PUBLIC_API_URL || `${request.protocol}://${request.headers.host}`).replace(/\/$/, '')
+  return { url: `${base}/public/contracts/${token}`, expiresAt }
+}
+
+/** Público (sin Clerk): solo el token firmado autoriza. Errores genéricos. */
+export async function publicContract(request, reply) {
+  const saleId = verifyContractToken(request.params.token)
+  const sale = saleId ? await findSale(saleId) : null
+  if (!sale?.layaway || sale.status === 'ANULADA') {
+    reply.status(403).send({ error: 'Enlace inválido o expirado' })
+    return
+  }
+  await sendContract(reply, sale, 'inline')
 }

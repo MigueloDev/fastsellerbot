@@ -16,7 +16,9 @@ export async function fetchBcv() {
       'x-device-id': deviceId,
       'x-api-key': apiKey,
     },
+    timeout: 15000,
   })
+
   if (!res.ok) throw new Error(`BCV upstream ${res.status}`)
 
   const { current } = await res.json()

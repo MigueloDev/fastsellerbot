@@ -1,6 +1,10 @@
 import { prisma } from './client.js'
 import { applyCashMovementInTx } from '../cash/apply.js'
-import { CashError } from '../cash/movement.js'
+import {
+  CashError,
+  assertAccountsForTransfer,
+  computeTransfer,
+} from '../cash/movement.js'
 
 const CURRENCIES = new Set(['USD', 'BS'])
 
@@ -39,6 +43,7 @@ function serializeMovement(row, runningBalance = null) {
     agentName: row.agentName,
     paymentId: row.paymentId,
     currencyPurchaseId: row.currencyPurchaseId,
+    transferId: row.transferId,
     createdAt: row.createdAt,
     ...(runningBalance != null ? { balance: runningBalance } : {}),
   }
@@ -250,6 +255,81 @@ export async function createCashMovement(accountId, input) {
   return {
     account: serializeAccount(account),
     movement: serializeMovement(movement, toNum(account.balance)),
+  }
+}
+
+function serializeTransfer(row) {
+  return {
+    id: row.id,
+    fromAccountId: row.fromAccountId,
+    toAccountId: row.toAccountId,
+    amountSent: toNum(row.amountSent),
+    feePercent: toNum(row.feePercent),
+    amountReceived: toNum(row.amountReceived),
+    note: row.note,
+    agentName: row.agentName,
+    createdAt: row.createdAt,
+  }
+}
+
+/**
+ * SALIDA en origen por amountSent + ENTRADA en destino por el neto, en una sola tx.
+ *
+ * @param {{ fromAccountId: string, toAccountId: string, amountSent: number, feePercent?: number|null, note?: string|null, agentName?: string|null }} input
+ */
+export async function createCashTransfer(input) {
+  const calc = computeTransfer(input)
+  const note = input.note?.trim() || null
+
+  const result = await prisma.$transaction(async (tx) => {
+    // Lock ambas cuentas en orden fijo: A→B y B→A concurrentes no se bloquean mutuamente.
+    const ids = [input.fromAccountId, input.toAccountId].sort()
+    await tx.$queryRaw`
+      SELECT id FROM cash_accounts WHERE id IN (${ids[0]}, ${ids[1]}) ORDER BY id FOR UPDATE
+    `
+    const [from, to] = await Promise.all([
+      tx.cashAccount.findUnique({ where: { id: input.fromAccountId } }),
+      tx.cashAccount.findUnique({ where: { id: input.toAccountId } }),
+    ])
+    assertAccountsForTransfer(from, to)
+
+    const transfer = await tx.cashTransfer.create({
+      data: {
+        fromAccountId: from.id,
+        toAccountId: to.id,
+        amountSent: calc.amountSent,
+        feePercent: calc.feePercent,
+        amountReceived: calc.amountReceived,
+        note,
+        agentName: input.agentName ?? null,
+      },
+    })
+
+    const feeLabel = calc.feePercent > 0 ? ` (${calc.feePercent}% comisión)` : ''
+    const suffix = note ? ` · ${note}` : ''
+    const out = await applyCashMovementInTx(tx, {
+      accountId: from.id,
+      type: 'SALIDA',
+      amount: calc.amountSent,
+      note: `Transferencia a ${to.alias}${feeLabel}${suffix}`,
+      agentName: input.agentName,
+      transferId: transfer.id,
+    })
+    const inn = await applyCashMovementInTx(tx, {
+      accountId: to.id,
+      type: 'ENTRADA',
+      amount: calc.amountReceived,
+      note: `Transferencia desde ${from.alias}${feeLabel}${suffix}`,
+      agentName: input.agentName,
+      transferId: transfer.id,
+    })
+    return { transfer, from: out.account, to: inn.account }
+  })
+
+  return {
+    transfer: serializeTransfer(result.transfer),
+    from: serializeAccount(result.from),
+    to: serializeAccount(result.to),
   }
 }
 

@@ -65,4 +65,21 @@ export default async function cashAccountsRoutes(app) {
       },
     },
   }, cashAccounts.createMovement)
+
+  app.post('/cash-transfers', {
+    schema: {
+      body: {
+        type: 'object',
+        required: ['fromAccountId', 'toAccountId', 'amountSent'],
+        additionalProperties: false,
+        properties: {
+          fromAccountId: { type: 'string', minLength: 1 },
+          toAccountId: { type: 'string', minLength: 1 },
+          amountSent: { type: 'number', exclusiveMinimum: 0 },
+          feePercent: { type: 'number', minimum: 0, exclusiveMaximum: 100 },
+          note: { type: ['string', 'null'] },
+        },
+      },
+    },
+  }, cashAccounts.createTransfer)
 }

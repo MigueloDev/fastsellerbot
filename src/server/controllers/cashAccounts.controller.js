@@ -4,6 +4,7 @@ import {
   updateCashAccount,
   getCashAccount,
   createCashMovement,
+  createCashTransfer,
   CashError,
 } from '../../db/cashAccounts.js'
 import { parseRange } from '../queryRange.js'
@@ -80,6 +81,23 @@ export async function createMovement(request, reply) {
       amount: request.body.amount,
       delta: request.body.delta,
       reason: request.body.reason,
+      note: request.body.note,
+      agentName: agentNameOf(request),
+    })
+    reply.status(201).send(result)
+  } catch (err) {
+    if (handleError(err, reply)) return
+    throw err
+  }
+}
+
+export async function createTransfer(request, reply) {
+  try {
+    const result = await createCashTransfer({
+      fromAccountId: request.body.fromAccountId,
+      toAccountId: request.body.toAccountId,
+      amountSent: request.body.amountSent,
+      feePercent: request.body.feePercent,
       note: request.body.note,
       agentName: agentNameOf(request),
     })

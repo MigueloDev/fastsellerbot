@@ -12,6 +12,7 @@ import {
 import { pickTierPrice, qtyByProduct } from '../sales/pricing.js'
 import { saleProfitOf } from '../sales/profit.js'
 import { chargesTotals, normalizeCharge, normalizeDelivery } from '../sales/charges.js'
+import { layawaySchedule, layawayTermsError, normalizeLayaway } from '../sales/layaway.js'
 import { readRate } from '../rates/store.js'
 import { paymentStatesWhere } from '../sales/paymentState.js'
 import { getRateById, listRatesUpTo } from './rates.js'
@@ -43,6 +44,7 @@ const SALE_INCLUDE = {
   },
   charges: { orderBy: { createdAt: 'asc' } },
   payments: { orderBy: { paidAt: 'asc' } },
+  //layaway: true,
 }
 
 function toNum(v) {
@@ -80,10 +82,30 @@ function serializeSale(row) {
       }
     }),
   }
+  const layaway = row.layaway
+    ? { ...row.layaway, downPaymentUsd: toNum(row.layaway.downPaymentUsd), penaltyPct: toNum(row.layaway.penaltyPct) }
+    : null
   return {
     ...base,
+    layaway,
+    schedule: layaway ? layawaySchedule({ totalUsd: base.totalUsd, layaway, payments: base.payments }) : null,
     ...saleProfitOf(base),
   }
+}
+
+/**
+ * Términos de apartado de create/update. undefined = no tocar (PATCH), null = venta normal.
+ * El contrato exige cédula del cliente.
+ */
+function parseLayaway(raw, totalUsd, customer) {
+  if (raw === undefined) return undefined
+  const { layaway, error } = normalizeLayaway(raw)
+  if (error) throw new SaleError(422, error)
+  if (!layaway) return null
+  const termsError = layawayTermsError(layaway, totalUsd)
+  if (termsError) throw new SaleError(422, termsError)
+  if (!customer.cedula) throw new SaleError(422, 'El apartado requiere la cédula del cliente')
+  return layaway
 }
 
 /**
@@ -222,6 +244,7 @@ export async function createSale(input) {
     sellerId = null,
     delivery,
     charges,
+    layaway: layawayInput,
   } = input
   assertSaleInput({ customerId, priceRef, items })
   const extras = parseSaleExtras(delivery ?? null, charges ?? [])
@@ -234,6 +257,7 @@ export async function createSale(input) {
 
     const resolved = await resolveSaleItems(tx, priceRef, items)
     const totalUsd = saleTotalOf(resolved, extras.charges)
+    const layaway = parseLayaway(layawayInput ?? null, totalUsd, customer)
 
     // La venta reserva, no descuenta: el SALIDA se escribe al entregar.
     await assertAvailableInTx(tx, resolved)
@@ -251,6 +275,7 @@ export async function createSale(input) {
         status: 'PENDIENTE',
         ...extras.delivery,
         charges: { create: extras.charges.map((c) => ({ ...c, agentName })) },
+        ...(layaway ? { layaway: { create: layaway } } : {}),
         items: {
           create: resolved.map((it) => ({
             productId: it.productId,
@@ -291,7 +316,7 @@ export async function findSaleByClientId(clientId) {
  * @param {{ customerId: string, priceRef: 'REF_USD'|'REF_BS', items: Array<{productId:string, variantId?:string|null, quantity:number, unitPriceUsd?:number}>, note?: string|null, agentName?: string|null }} input
  */
 export async function updateSale(saleId, input) {
-  const { customerId, priceRef, items, note = null, agentName = null, delivery, charges } = input
+  const { customerId, priceRef, items, note = null, agentName = null, delivery, charges, layaway: layawayInput } = input
   assertSaleInput({ customerId, priceRef, items })
   const extras = parseSaleExtras(delivery, charges)
 
@@ -325,6 +350,7 @@ export async function updateSale(saleId, input) {
 
     const resolved = await resolveSaleItems(tx, priceRef, items)
     const totalUsd = saleTotalOf(resolved, extras.charges ?? current.charges)
+    const layaway = parseLayaway(layawayInput, totalUsd, customer)
 
     // La reserva vieja de esta misma venta no cuenta contra la nueva
     await assertAvailableInTx(tx, resolved, { excludeSaleId: saleId })
@@ -332,6 +358,11 @@ export async function updateSale(saleId, input) {
 
     await tx.saleItem.deleteMany({ where: { saleId } })
     if (extras.charges) await tx.saleCharge.deleteMany({ where: { saleId } })
+    // Editar términos conserva N° de contrato y fecha de firma.
+    if (layaway === null) await tx.saleLayaway.deleteMany({ where: { saleId } })
+    if (layaway) {
+      await tx.saleLayaway.upsert({ where: { saleId }, create: { saleId, ...layaway }, update: layaway })
+    }
     await tx.sale.update({
       where: { id: saleId },
       data: {
@@ -733,11 +764,15 @@ export async function deliverSale(saleId, { agentName = null } = {}) {
   const sale = await prisma.$transaction(async (tx) => {
     const current = await tx.sale.findUnique({
       where: { id: saleId },
-      include: { items: true },
+      include: { items: true, layaway: true },
     })
     if (!current) throw new SaleError(404, 'Venta no encontrada')
     if (current.status === 'ANULADA') {
       throw new SaleError(409, 'No se puede entregar una venta anulada')
+    }
+    // Contrato de apartado, cláusula QUINTA: se entrega con el pago total.
+    if (current.layaway && current.status !== 'PAGADA') {
+      throw new SaleError(409, 'Un apartado solo se entrega cuando está pagado por completo')
     }
     if (current.deliveryStatus === 'ENTREGADA') {
       throw new SaleError(409, 'La venta ya fue entregada')

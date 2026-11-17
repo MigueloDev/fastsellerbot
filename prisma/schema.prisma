@@ -294,11 +294,30 @@ model Sale {
   payments                    Payment[]
   movements                   StockMovement[]
   currencyPurchaseAllocations CurrencyPurchaseAllocation[]
+  layaway                     SaleLayaway?
 
   @@index([status, createdAt(sort: Desc)])
   @@index([deliveryStatus])
   @@index([sellerId])
   @@map("sales")
+}
+
+// Condición de venta "Apartado": términos del contrato (1:1 con la venta).
+// Sin fila = venta normal (contado/crédito según pagos).
+model SaleLayaway {
+  id             String   @id @default(cuid())
+  saleId         String   @unique @map("sale_id")
+  number         Int      @unique @default(autoincrement()) // N° de contrato
+  startAt        DateTime @default(now()) @map("start_at") // fecha de firma
+  downPaymentUsd Decimal  @db.Decimal(12, 2) @map("down_payment_usd")
+  installments   Int      @default(4)
+  everyDays      Int      @default(7) @map("every_days")
+  deadlineDays   Int      @default(30) @map("deadline_days")
+  penaltyPct     Decimal  @default(20) @db.Decimal(5, 2) @map("penalty_pct") // % sobre la inicial
+  serial         String?
+  sale           Sale     @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  @@map("sale_layaways")
 }
 
 model SaleItem {
@@ -472,8 +491,31 @@ model CashAccount {
   payments      Payment[]
   purchasesFrom CurrencyPurchase[] @relation("CurrencyPurchaseFrom")
   purchasesTo   CurrencyPurchase[] @relation("CurrencyPurchaseTo")
+  transfersFrom CashTransfer[]    @relation("CashTransferFrom")
+  transfersTo   CashTransfer[]    @relation("CashTransferTo")
 
   @@map("cash_accounts")
+}
+
+/** Movimiento entre dos cuentas propias de la misma moneda; la comisión es amountSent − amountReceived. */
+model CashTransfer {
+  id             String         @id @default(cuid())
+  fromAccountId  String         @map("from_account_id")
+  toAccountId    String         @map("to_account_id")
+  amountSent     Decimal        @db.Decimal(14, 2) @map("amount_sent")
+  feePercent     Decimal        @default(0) @db.Decimal(5, 2) @map("fee_percent")
+  amountReceived Decimal        @db.Decimal(14, 2) @map("amount_received")
+  note           String?
+  agentName      String?        @map("agent_name")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  fromAccount    CashAccount    @relation("CashTransferFrom", fields: [fromAccountId], references: [id])
+  toAccount      CashAccount    @relation("CashTransferTo", fields: [toAccountId], references: [id])
+  cashMovements  CashMovement[]
+
+  @@index([fromAccountId])
+  @@index([toAccountId])
+  @@index([createdAt(sort: Desc)])
+  @@map("cash_transfers")
 }
 
 model CashMovement {
@@ -487,14 +529,17 @@ model CashMovement {
   agentName          String?             @map("agent_name")
   paymentId          String?             @unique @map("payment_id")
   currencyPurchaseId String?             @map("currency_purchase_id")
+  transferId         String?             @map("transfer_id")
   // ponytail: próximo módulo Compras → purchaseId String? + relation, mismo patrón que currencyPurchaseId.
   // Gasto suelto = reason GASTO y purchaseId null. Compra de mercancía = misma tx crea Purchase + SALIDA GASTO con purchaseId.
   createdAt          DateTime            @default(now()) @map("created_at")
   account            CashAccount         @relation(fields: [accountId], references: [id])
   payment            Payment?            @relation(fields: [paymentId], references: [id])
   currencyPurchase   CurrencyPurchase?   @relation(fields: [currencyPurchaseId], references: [id])
+  transfer           CashTransfer?       @relation(fields: [transferId], references: [id])
 
   @@index([accountId, createdAt(sort: Desc)])
   @@index([currencyPurchaseId])
+  @@index([transferId])
   @@map("cash_movements")
 }

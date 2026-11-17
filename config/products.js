@@ -25,6 +25,18 @@ export const products = [
     ],
     active: true,
   },
+  {
+    // TODO: completar con datos reales y pasar a active: true antes de `scripts/leads analyze`
+    id: 'ventilador',
+    name: 'Ventilador',
+    description: 'PENDIENTE: modelo, tamaño, potencia.',
+    conditions: [
+      'PENDIENTE: precio unitario',
+      'PENDIENTE: precio por cantidad',
+      'PENDIENTE: entrega / retiro',
+    ],
+    active: false,
+  },
 ]
 
 export function getActiveProducts() {

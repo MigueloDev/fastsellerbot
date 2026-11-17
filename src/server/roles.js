@@ -22,6 +22,8 @@ const SELLER_PATTERNS = [
   { method: 'POST', re: /^\/sales\/[^/]+\/evidence$/ },
   { method: 'GET', re: /^\/sales\/[^/]+\/evidence-url$/ },
   { method: 'PATCH', re: /^\/sales\/[^/]+\/delivery$/ },
+  { method: 'GET', re: /^\/sales\/[^/]+\/contract\.pdf$/ },
+  { method: 'POST', re: /^\/sales\/[^/]+\/contract-link$/ },
 ]
 
 /**
