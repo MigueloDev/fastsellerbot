@@ -25,6 +25,7 @@ function toNum(v) {
  *   agentName?: string|null,
  *   paymentId?: string|null,
  *   currencyPurchaseId?: string|null,
+ *   transferId?: string|null,
  *   createdAt?: Date,
  * }} input
  */
@@ -52,6 +53,7 @@ export async function applyCashMovementInTx(tx, input) {
       agentName: input.agentName ?? null,
       paymentId: input.paymentId ?? null,
       currencyPurchaseId: input.currencyPurchaseId ?? null,
+      transferId: input.transferId ?? null,
       // Pago offline: la fecha del movimiento sigue al paidAt del pago,
       // así el estado de cuenta y "Cobrado" cuadran con la misma fecha.
       ...(input.createdAt ? { createdAt: input.createdAt } : {}),

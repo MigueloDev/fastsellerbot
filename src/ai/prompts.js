@@ -117,3 +117,53 @@ Reglas:
 - Solo dar la bienvenida y mencionar que pueden preguntar por los productos
 - Sin emojis en exceso, máximo 1`
 }
+
+/** Prompt para puntuar un lead que dejó de responder y redactar el mensaje para retomarlo. */
+export function buildLeadScorePrompt({ messages, daysSilent, lastFrom }) {
+  const catalogue = buildCatalogue()
+  const fmt = (ts) => new Date(ts * 1000).toLocaleDateString('es-VE', { day: '2-digit', month: '2-digit' })
+  const conversation = messages
+    .map((m) => `[${fmt(m.ts)}] ${m.fromMe ? 'Vendedor' : 'Cliente'}: ${m.text}`)
+    .join('\n')
+
+  return `IDIOMA: español latinoamericano informal. Nunca uses palabras en inglés.
+
+Eres quien vende por WhatsApp. Este cliente potencial escribió y dejó de responder.
+
+## Catálogo de productos
+
+${catalogue}
+
+## Conversación (más antigua primero)
+
+${conversation}
+
+El último mensaje fue hace ${daysSilent} días y lo envió el ${lastFrom}.
+
+## Tarea
+
+1. score: 0-100, probabilidad de que compre si lo retomamos.
+2. stage:
+   - caliente: preguntó precio, forma de pago, entrega o mostró intención clara de comprar
+   - tibio: pidió información general o mostró algo de interés
+   - frio: solo saludó o respondió con monosílabos
+   - descartado: dijo que no, ya compró en otro lado, o la conversación no es sobre los productos
+3. reason: una frase breve que justifique el stage.
+4. draft: el mensaje para retomar la conversación.
+
+## Reglas del draft
+
+- Máximo 2 oraciones, como lo escribiría una persona real por WhatsApp
+- Retoma lo último que le interesaba (producto, cantidad, duda) sin repetir lo que ya se le dijo
+- Usa el mismo trato (tú/usted) que tuvo la conversación
+- No inventes precios ni condiciones fuera del catálogo
+- No reveles que es un sistema automatizado
+- Máximo 1 emoji y termina con una pregunta fácil de responder
+- Cada draft debe sonar distinto, nada de plantillas
+- Si stage es descartado, draft vacío ("")
+
+## Formato de respuesta
+
+Solo JSON válido, sin markdown:
+{"score":0-100,"stage":"caliente"|"tibio"|"frio"|"descartado","reason":"string breve","draft":"string"}`
+}

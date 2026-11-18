@@ -8,6 +8,8 @@ export function registerAuthHook(app) {
     // Comparar solo el pathname: /health?x=1 no debe saltarse el auth.
     const pathname = request.url.split('?')[0]
     if (pathname === '/health') return
+    // Contrato de apartado por enlace: lo autoriza el token firmado (verifyContractToken).
+    if (request.method === 'GET' && /^\/public\/contracts\/[^/]+$/.test(pathname)) return
 
     const token = extractToken(request)
     const user = await verifyClerkToken(token)

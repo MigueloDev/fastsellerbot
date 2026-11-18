@@ -7,6 +7,8 @@ import {
   pickDefaultAccount,
   assertAccountForPayment,
   assertAccountsForConversion,
+  assertAccountsForTransfer,
+  computeTransfer,
 } from './movement.js'
 
 describe('normalizeCashMovement', () => {
@@ -183,5 +185,61 @@ describe('assertAccountsForConversion', () => {
       () => assertAccountsForConversion(usd, bs),
       (err) => err instanceof CashError && err.status === 422,
     )
+  })
+})
+
+describe('assertAccountsForTransfer', () => {
+  const isCash422 = (err) => err instanceof CashError && err.status === 422
+  const efectivo = { id: 'a', active: true, currency: 'USD' }
+  const binance = { id: 'b', active: true, currency: 'USD' }
+
+  it('misma moneda, activas y distintas pasa', () => {
+    assert.doesNotThrow(() => assertAccountsForTransfer(efectivo, binance))
+  })
+
+  it('misma cuenta, monedas distintas, inactiva o ausente → 422', () => {
+    assert.throws(() => assertAccountsForTransfer(efectivo, efectivo), isCash422)
+    assert.throws(
+      () => assertAccountsForTransfer(efectivo, { id: 'c', active: true, currency: 'BS' }),
+      isCash422,
+    )
+    assert.throws(
+      () => assertAccountsForTransfer(efectivo, { ...binance, active: false }),
+      isCash422,
+    )
+    assert.throws(() => assertAccountsForTransfer(null, binance), isCash422)
+  })
+})
+
+describe('computeTransfer', () => {
+  const isCash422 = (err) => err instanceof CashError && err.status === 422
+
+  it('0 % (o ausente) recibe el monto completo', () => {
+    assert.deepEqual(computeTransfer({ amountSent: 100, feePercent: 0 }), {
+      amountSent: 100,
+      feePercent: 0,
+      amountReceived: 100,
+      fee: 0,
+    })
+    assert.equal(computeTransfer({ amountSent: 100 }).amountReceived, 100)
+  })
+
+  it('aplica el % y redondea a 2 decimales', () => {
+    assert.deepEqual(computeTransfer({ amountSent: 100, feePercent: 1.5 }), {
+      amountSent: 100,
+      feePercent: 1.5,
+      amountReceived: 98.5,
+      fee: 1.5,
+    })
+    const r = computeTransfer({ amountSent: 33.33, feePercent: 0.7 })
+    assert.equal(r.amountReceived, 33.1)
+    assert.equal(r.fee, 0.23)
+  })
+
+  it('monto ≤ 0 o % fuera de [0, 100) → 422', () => {
+    assert.throws(() => computeTransfer({ amountSent: 0 }), isCash422)
+    assert.throws(() => computeTransfer({ amountSent: 10, feePercent: -1 }), isCash422)
+    assert.throws(() => computeTransfer({ amountSent: 10, feePercent: 100 }), isCash422)
+    assert.throws(() => computeTransfer({ amountSent: 10, feePercent: Number.NaN }), isCash422)
   })
 })

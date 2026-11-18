@@ -128,3 +128,45 @@ export function assertAccountsForConversion(from, to) {
     throw new CashError(422, 'La cuenta de destino debe ser en USD')
   }
 }
+
+/**
+ * @param {{ id?: string, active?: boolean, currency?: string }|null|undefined} from
+ * @param {{ id?: string, active?: boolean, currency?: string }|null|undefined} to
+ */
+export function assertAccountsForTransfer(from, to) {
+  if (!from) throw new CashError(422, 'Cuenta de origen no encontrada')
+  if (!to) throw new CashError(422, 'Cuenta de destino no encontrada')
+  if (from.id === to.id) {
+    throw new CashError(422, 'Origen y destino deben ser cuentas distintas')
+  }
+  if (!from.active) throw new CashError(422, 'Cuenta de origen inactiva')
+  if (!to.active) throw new CashError(422, 'Cuenta de destino inactiva')
+  if (from.currency !== to.currency) {
+    throw new CashError(422, 'Las cuentas deben tener la misma moneda')
+  }
+}
+
+/**
+ * @param {{ amountSent: number, feePercent?: number|null }} input
+ * @returns {{ amountSent: number, feePercent: number, amountReceived: number, fee: number }}
+ */
+export function computeTransfer(input) {
+  const amountSent = round2(Number(input?.amountSent))
+  if (!Number.isFinite(amountSent) || !(amountSent > 0)) {
+    throw new CashError(422, 'El monto a enviar debe ser > 0')
+  }
+  const feePercent = round2(Number(input?.feePercent ?? 0))
+  if (!Number.isFinite(feePercent) || feePercent < 0 || feePercent >= 100) {
+    throw new CashError(422, 'La comisión debe estar entre 0 y 99,99 %')
+  }
+  const amountReceived = round2(amountSent * (1 - feePercent / 100))
+  if (!(amountReceived > 0)) {
+    throw new CashError(422, 'El monto recibido debe ser > 0')
+  }
+  return {
+    amountSent,
+    feePercent,
+    amountReceived,
+    fee: round2(amountSent - amountReceived),
+  }
+}

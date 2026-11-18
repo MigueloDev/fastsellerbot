@@ -6,7 +6,7 @@ import makeWASocket, { Browsers, fetchLatestBaileysVersion } from '@whiskeysocke
 const { SESSION_ID } = process.env
 
 // ponytail: mute Baileys pino without adding a pino dep
-const silentLogger = {
+export const silentLogger = {
   level: 'silent',
   child() {
     return this

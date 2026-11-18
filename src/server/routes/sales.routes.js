@@ -40,6 +40,21 @@ const chargeSchema = {
   },
 }
 
+// Condición "Apartado"; null/omitido en POST = venta normal. En PATCH: omitido = no tocar, null = quitar.
+const layawaySchema = {
+  type: ['object', 'null'],
+  required: ['downPaymentUsd'],
+  additionalProperties: false,
+  properties: {
+    downPaymentUsd: { type: 'number', exclusiveMinimum: 0 },
+    installments: { type: 'integer', minimum: 1, maximum: 52 },
+    everyDays: { type: 'integer', minimum: 1, maximum: 90 },
+    deadlineDays: { type: 'integer', minimum: 1, maximum: 365 },
+    penaltyPct: { type: 'number', minimum: 0, maximum: 100 },
+    serial: { type: ['string', 'null'], maxLength: 120 },
+  },
+}
+
 // Un PDF de 10 MiB en base64 pesa ~13.4 MiB; se le da margen a payments/evidence.
 const FILE_BODY_LIMIT = 14 * 1024 * 1024
 
@@ -84,6 +99,7 @@ export default async function salesRoutes(app) {
           note: { type: ['string', 'null'] },
           delivery: deliverySchema,
           charges: { type: 'array', maxItems: 20, items: chargeSchema },
+          layaway: layawaySchema,
         },
       },
     },
@@ -107,6 +123,7 @@ export default async function salesRoutes(app) {
           // Omitidos → se conservan la entrega y los costos actuales.
           delivery: deliverySchema,
           charges: { type: 'array', maxItems: 20, items: chargeSchema },
+          layaway: layawaySchema,
         },
       },
     },
@@ -118,6 +135,12 @@ export default async function salesRoutes(app) {
 
   app.post('/sales/:id/charges', { schema: { body: chargeSchema } }, sales.addCharge)
   app.delete('/sales/:id/charges/:chargeId', sales.removeCharge)
+
+  app.get('/sales/:id/contract.pdf', sales.contractPdf)
+  app.post('/sales/:id/contract-link', sales.contractLink)
+  app.get('/public/contracts/:token', {
+    schema: { params: { type: 'object', properties: { token: { type: 'string', maxLength: 512 } } } },
+  }, sales.publicContract)
 
   app.post('/sales/:id/payments', {
     // Base64 receipts can be multi-MB; Fastify default body limit is 1 MiB.
