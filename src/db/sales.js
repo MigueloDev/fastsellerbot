@@ -44,7 +44,7 @@ const SALE_INCLUDE = {
   },
   charges: { orderBy: { createdAt: 'asc' } },
   payments: { orderBy: { paidAt: 'asc' } },
-  //layaway: true,
+  layaway: true,
 }
 
 function toNum(v) {
